@@ -10,7 +10,7 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "dev:web": "npm --prefix web run dev",
-    "build": "npm --prefix web ci && npm --prefix web run build",
+    "build": "npm --prefix web ci --include=dev && npm --prefix web run build",
     "test": "vitest run",
     "lint": "eslint . && npm --prefix web run lint",
     "typecheck": "npm --prefix web run typecheck",
