@@ -221,7 +221,8 @@ describe('GET /hackathons/:id/suggestions', () => {
 
   it('ranks open teams for a user without one', async () => {
     const solo = await t.user({ skills: ['design'], timezone: 'UTC' });
-    const { body } = await solo.get(`/api/hackathons/${t.hid}/suggestions?kind=teams`);
+    const { status, body } = await solo.get(`/api/hackathons/${t.hid}/suggestions?kind=teams`);
+    expect(status).toBe(200);
     expect(body.suggestions.length).toBeGreaterThan(0);
     expect(body.suggestions[0].team.name).toBe('Needs design');
     expect(body.suggestions.every((s) => s.team.openSeats > 0)).toBe(true);

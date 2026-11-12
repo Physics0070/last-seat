@@ -105,10 +105,11 @@ export async function suggestTeams(ctx, hackathonId, userId, publicTeam) {
     .toArray();
   const users = await ctx.users.find({ _id: { $in: memberships.map((m) => m.userId) } }, { projection: profile }).toArray();
   const userById = new Map(users.map((u) => [String(u._id), u]));
-  const membersByTeam = Map.groupBy(memberships, (m) => String(m.teamId));
+  const membersByTeam = new Map(teams.map((t) => [String(t._id), []]));
+  for (const m of memberships) membersByTeam.get(String(m.teamId)).push(userById.get(String(m.userId)));
 
   const scored = teams.map((t) => {
-    const members = membersByTeam.get(String(t._id)).map((m) => userById.get(String(m.userId)));
+    const members = membersByTeam.get(String(t._id));
     return { team: publicTeam(t), ...scoreMatch(user, groupOf(members, t.lookingFor), ctx.config) };
   });
   return { for: { userId: String(userId) }, suggestions: top(scored, ctx.config.SUGGEST_LIMIT) };
