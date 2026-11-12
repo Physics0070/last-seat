@@ -1,0 +1,41 @@
+{
+  "name": "last-seat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "dev:web": "npm --prefix web run dev",
+    "build": "npm --prefix web ci && npm --prefix web run build",
+    "test": "vitest run",
+    "lint": "eslint . && npm --prefix web run lint",
+    "typecheck": "npm --prefix web run typecheck",
+    "seed": "node scripts/seed.js",
+    "loadtest": "node scripts/loadtest.js"
+  },
+  "dependencies": {
+    "argon2": "^0.45.2",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.4",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongodb": "^7.8.0",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "autocannon": "^9.0.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
+    "mongodb-memory-server": "^11.3.0",
+    "supertest": "^7.3.2",
+    "vitest": "^4.1.12"
+  }
+}
