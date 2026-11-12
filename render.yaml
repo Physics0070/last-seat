@@ -1,0 +1,52 @@
+# Render blueprint: one web service runs the API, the event stream and the built UI.
+# MONGODB_URI (an Atlas connection string) and SEED_PASSWORD are asked for when the blueprint is created.
+services:
+  - type: web
+    name: last-seat
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - { key: NODE_ENV, value: production }
+      - { key: NODE_VERSION, value: "20" }
+      - { key: LOG_LEVEL, value: info }
+      - { key: TRUST_PROXY, value: "1" }
+      - { key: MONGODB_URI, sync: false }
+      - { key: MONGODB_DB, value: lastseat }
+      - { key: TXN_MAX_ATTEMPTS, value: "10" }
+      - { key: JWT_SECRET, generateValue: true }
+      - { key: JWT_TTL_SECONDS, value: "604800" }
+      - { key: COOKIE_SECURE, value: "true" }
+      - { key: HACKATHON_SLUG, value: hack4hack-2026 }
+      - { key: HACKATHON_NAME, value: Hack4Hack 2026 }
+      - { key: MIN_TEAM_SIZE, value: "2" }
+      - { key: MAX_TEAM_SIZE, value: "4" }
+      - { key: INVITE_TTL_HOURS, value: "72" }
+      - { key: INVITE_CODE_BYTES, value: "10" }
+      - { key: RATE_LIMIT_WINDOW_MS, value: "60000" }
+      - { key: RATE_LIMIT_MAX, value: "600" }
+      - { key: AUTH_RATE_LIMIT_MAX, value: "20" }
+      - { key: REDEEM_RATE_LIMIT_WINDOW_MS, value: "600000" }
+      - { key: REDEEM_RATE_LIMIT_IP_MAX, value: "30" }
+      - { key: REDEEM_RATE_LIMIT_USER_MAX, value: "10" }
+      - { key: IDEMPOTENCY_TTL_HOURS, value: "24" }
+      - { key: IDEMPOTENCY_LOCK_SECONDS, value: "30" }
+      - { key: SSE_HEARTBEAT_MS, value: "25000" }
+      - { key: SSE_RETRY_MS, value: "2000" }
+      - { key: SSE_REPLAY_BUFFER, value: "1000" }
+      - { key: BOARD_PAGE_SIZE_DEFAULT, value: "20" }
+      - { key: BOARD_PAGE_SIZE_MAX, value: "50" }
+      - { key: BOARD_CACHE_TTL_MS, value: "1000" }
+      - { key: BOARD_CACHE_MAX_ENTRIES, value: "500" }
+      - { key: SUGGEST_SKILL_WEIGHT, value: "0.6" }
+      - { key: SUGGEST_TZ_WEIGHT, value: "0.4" }
+      - { key: SUGGEST_SKILL_TARGET, value: "3" }
+      - { key: SUGGEST_WORKDAY_HOURS, value: "8" }
+      - { key: SUGGEST_LIMIT, value: "10" }
+      - { key: SUGGEST_TEAM_POOL, value: "200" }
+      - { key: SEED_USERS, value: "10000" }
+      - { key: SEED_TEAMS, value: "2000" }
+      - { key: SEED_RANDOM_SEED, value: "42" }
+      - { key: SEED_PASSWORD, sync: false }

@@ -14,7 +14,7 @@ describe('authentication', () => {
   it('rejects unauthenticated access to protected routes', async () => {
     const team = await t.team(1);
     const attempts = await Promise.all([
-      t.anon.get('/api/me'),
+      t.anon.get(`/api/hackathons/${t.hid}/me`),
       t.anon.post(teamsPath()).send({ name: 'Nope' }),
       t.anon.post('/api/invites/redeem').send({ code: team.code }),
       t.anon.get(`/api/teams/${team.id}`),
@@ -28,8 +28,11 @@ describe('authentication', () => {
   });
 
   it('rejects a forged session cookie', async () => {
-    const res = await t.anon.get('/api/me').set('Cookie', 'session=not.a.jwt');
-    expect(res.status).toBe(401);
+    const forged = 'session=not.a.jwt';
+    expect((await t.anon.get('/api/me').set('Cookie', forged)).body).toEqual({ user: null });
+    expect((await t.anon.get(`/api/hackathons/${t.hid}/me`).set('Cookie', forged)).status).toBe(401);
+    const u = await t.user();
+    expect((await u.get('/api/me')).body.user).toMatchObject({ id: u.id, email: u.email });
   });
 
   it('sets an httpOnly SameSite cookie and never returns the password hash', async () => {

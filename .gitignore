@@ -4,3 +4,7 @@ dist/
 coverage/
 *.log
 .loadtest-db/
+council-report-*.html
+council-transcript-*.md
+council-report-*.html
+council-transcript-*.md

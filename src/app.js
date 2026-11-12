@@ -10,7 +10,7 @@ import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { isDuplicateKey } from './db.js';
 import { createEventBus } from './events.js';
-import { AppError, SESSION_COOKIE, cookieOptions, errorHandler, notFound, objectId, parse, requireAuth, signSession } from './http.js';
+import { AppError, SESSION_COOKIE, cookieOptions, errorHandler, notFound, objectId, parse, readUser, requireAuth, signSession } from './http.js';
 import { idempotency } from './idempotency.js';
 import { SKILLS, isTimezone, suggestPeople, suggestTeams, utcOffsetMinutes } from './suggestions.js';
 import * as teams from './teams.js';
@@ -165,6 +165,13 @@ export async function createApp(ctx) {
     res.json({ ok: true });
   });
 
+  // "Who am I?" is public and answers { user: null } without a session, so a signed-out page load is not an error.
+  api.get('/me', async (req, res) => {
+    const session = readUser(config, req);
+    const user = session && (await ctx.users.findOne({ _id: session.id }));
+    res.json({ user: user ? selfUser(user) : null });
+  });
+
   api.get('/hackathons/:id/teams', async (req, res) => {
     const key = req.originalUrl;
     let entry = boardCache.get(key);
@@ -189,12 +196,6 @@ export async function createApp(ctx) {
   // ---------- authenticated ----------
 
   api.use(requireAuth(config), idempotency(ctx));
-
-  api.get('/me', async (req, res) => {
-    const user = await ctx.users.findOne({ _id: req.user.id });
-    if (!user) throw new AppError(401, 'unauthenticated', 'Sign in to continue.');
-    res.json({ user: selfUser(user) });
-  });
 
   api.get('/hackathons/:id/me', async (req, res) => res.json(await teams.getMyState(ctx, actorOf(req), hackathonId(req))));
 

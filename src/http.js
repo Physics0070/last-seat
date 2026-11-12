@@ -37,7 +37,7 @@ export function cookieOptions(config) {
   return { httpOnly: true, sameSite: 'lax', secure: config.COOKIE_SECURE, path: '/', maxAge: config.JWT_TTL_SECONDS * 1000 };
 }
 
-function readUser(config, req) {
+export function readUser(config, req) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return null;
   try {
