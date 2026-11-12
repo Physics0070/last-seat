@@ -49,12 +49,6 @@ function readUser(config, req) {
   }
 }
 
-/** Sets req.user when a valid session cookie is present. */
-export const optionalAuth = (config) => (req, _res, next) => {
-  req.user = readUser(config, req);
-  next();
-};
-
 export const requireAuth = (config) => (req, _res, next) => {
   req.user = readUser(config, req);
   next(req.user ? undefined : new AppError(401, 'unauthenticated', 'Sign in to continue.'));

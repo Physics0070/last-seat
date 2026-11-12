@@ -9,7 +9,11 @@ const log = pino({ level: config.LOG_LEVEL });
 
 const ctx = await connectDb(config, log);
 const { app, bus } = await createApp(ctx);
-const server = app.listen(config.PORT, () => log.info({ port: server.address().port }, 'listening'));
+// Express 5 passes listen errors (such as EADDRINUSE) to this callback instead of throwing.
+const server = app.listen(config.PORT, (err) => {
+  if (err) throw err;
+  log.info({ port: server.address().port }, 'listening');
+});
 
 async function shutdown(signal) {
   log.info({ signal }, 'shutting down');

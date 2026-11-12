@@ -10,7 +10,7 @@ import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { isDuplicateKey } from './db.js';
 import { createEventBus } from './events.js';
-import { AppError, SESSION_COOKIE, cookieOptions, errorHandler, notFound, objectId, optionalAuth, parse, requireAuth, signSession } from './http.js';
+import { AppError, SESSION_COOKIE, cookieOptions, errorHandler, notFound, objectId, parse, requireAuth, signSession } from './http.js';
 import { idempotency } from './idempotency.js';
 import { SKILLS, isTimezone, suggestPeople, suggestTeams, utcOffsetMinutes } from './suggestions.js';
 import * as teams from './teams.js';
@@ -37,6 +37,7 @@ const schemas = {
   }),
   redeem: z.strictObject({ code: z.string().min(1).max(100) }),
   createRequest: z.strictObject({ message: z.string().trim().max(300).default('') }),
+  suggestions: z.strictObject({ kind: z.enum(['people', 'teams']).default('people') }),
   empty: z.strictObject({}),
   id: z.strictObject({ id: objectId }),
   member: z.strictObject({ id: objectId, userId: objectId }),
@@ -91,19 +92,27 @@ export async function createApp(ctx) {
     if (!id.equals(ctx.hackathon._id)) throw new AppError(404, 'hackathon_not_found', 'This hackathon does not exist.');
     return id;
   };
-  const page = (req) =>
-    parse(
-      z.strictObject({
-        cursor: objectId.optional(),
-        limit: z.coerce.number().int().min(1).max(config.BOARD_PAGE_SIZE_MAX).default(config.BOARD_PAGE_SIZE_DEFAULT),
-        skill: skill.optional(),
-      }),
-      req.query,
-    );
+  // Built once: constructing a zod schema per request is far more expensive than using one.
+  const pageQuery = z.strictObject({
+    cursor: objectId.optional(),
+    limit: z.coerce.number().int().min(1).max(config.BOARD_PAGE_SIZE_MAX).default(config.BOARD_PAGE_SIZE_DEFAULT),
+    skill: skill.optional(),
+  });
+  const page = (req) => parse(pageQuery, req.query);
+
+  // Serialized board pages by URL. Every committed team change clears the map, so a reader never sees a page
+  // older than the last event this instance published; the TTL bounds staleness from other instances' writes.
+  // ponytail: per-process cache. With several instances, clear it from the shared event stream as well.
+  const boardCache = new Map();
+  let boardVersion = 0;
 
   /** Runs a mutation, then publishes its events. Events go out only after the transaction has committed. */
   const mutate = (status, fn) => async (req, res) => {
     const { result, events } = await fn(req, actorOf(req));
+    if (events.length) {
+      boardVersion++;
+      boardCache.clear();
+    }
     bus.publish(ctx.hackathon._id, events);
     res.status(status).json(result);
   };
@@ -156,7 +165,24 @@ export async function createApp(ctx) {
     res.json({ ok: true });
   });
 
-  api.get('/hackathons/:id/teams', async (req, res) => res.json(await teams.listBoard(ctx, hackathonId(req), page(req))));
+  api.get('/hackathons/:id/teams', async (req, res) => {
+    const key = req.originalUrl;
+    let entry = boardCache.get(key);
+    if (!entry || entry.expires <= Date.now()) {
+      const version = boardVersion;
+      // The promise itself is cached, so 100 concurrent misses for a page share one query (no stampede on expiry).
+      const body = teams.listBoard(ctx, hackathonId(req), page(req)).then(JSON.stringify);
+      entry = { body, expires: Date.now() + config.BOARD_CACHE_TTL_MS };
+      if (config.BOARD_CACHE_TTL_MS > 0) {
+        if (boardCache.size >= config.BOARD_CACHE_MAX_ENTRIES) boardCache.clear();
+        boardCache.set(key, entry);
+        // Drop the entry if the query failed, or if a team changed while it ran (the page may predate that change).
+        const drop = () => boardCache.get(key) === entry && boardCache.delete(key);
+        body.then(() => version !== boardVersion && drop(), drop);
+      }
+    }
+    res.type('json').send(await entry.body);
+  });
 
   api.get('/hackathons/:id/events', (req, res) => bus.subscribe(req, res, hackathonId(req)));
 
@@ -174,7 +200,7 @@ export async function createApp(ctx) {
 
   api.get('/hackathons/:id/suggestions', async (req, res) => {
     const id = hackathonId(req);
-    const { kind } = parse(z.strictObject({ kind: z.enum(['people', 'teams']).default('people') }), req.query);
+    const { kind } = parse(schemas.suggestions, req.query);
     res.json(kind === 'teams' ? await suggestTeams(ctx, id, req.user.id, teams.publicTeam) : await suggestPeople(ctx, id, req.user.id));
   });
 

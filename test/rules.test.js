@@ -364,6 +364,21 @@ describe('board', () => {
     }
   });
 
+  it('cached pages are dropped the moment a team changes', async () => {
+    const team = await t.team(3, { name: 'Almost full' });
+    const path = `${teamsPath()}?limit=50`;
+    const before = await t.anon.get(path);
+    const repeat = await t.anon.get(path);
+    expect(before.body.items.find((i) => i.id === team.id)).toMatchObject({ openSeats: 1 });
+    expect(repeat.body).toEqual(before.body);
+
+    const u = await t.user();
+    await u.post('/api/invites/redeem', { code: team.code });
+
+    const after = await t.anon.get(path);
+    expect(after.body.items.map((i) => i.id)).not.toContain(team.id);
+  });
+
   it('is served by an index scan with no in-memory sort', async () => {
     const plan = await t.ctx.teams
       .find({ hackathonId: t.ctx.hackathon._id, isOpen: true })

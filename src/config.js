@@ -47,6 +47,9 @@ const schema = z
 
     BOARD_PAGE_SIZE_DEFAULT: int(1),
     BOARD_PAGE_SIZE_MAX: int(1),
+    // 0 disables the board page cache.
+    BOARD_CACHE_TTL_MS: int(0),
+    BOARD_CACHE_MAX_ENTRIES: int(1),
 
     SUGGEST_SKILL_WEIGHT: weight,
     SUGGEST_TZ_WEIGHT: weight,
