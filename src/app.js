@@ -59,6 +59,8 @@ export async function createApp(ctx) {
   app.set('trust proxy', config.TRUST_PROXY);
   app.disable('x-powered-by');
   app.locals.metrics = ctx.metrics;
+  // TEMPORARY DIAGNOSTIC (removed in the next commit): how does a request arrive behind Render's proxies?
+  app.get('/__whoami', (req, res) => res.json({ ip: req.ip, ips: req.ips, xff: req.get('x-forwarded-for'), cf: req.get('cf-connecting-ip'), socket: req.socket.remoteAddress, trust: app.get('trust proxy') }));
   ctx.metrics.describeGauge('sse_clients', 'Open live-update connections.', () => bus.clientCount());
   ctx.metrics.describeGauge('board_cache_entries', 'Serialized board pages currently cached.', () => boardCache.size);
   ctx.metrics.describeGauge('process_resident_memory_bytes', 'Resident memory of this process.', () => process.memoryUsage.rss());
