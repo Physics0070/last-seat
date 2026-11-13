@@ -1,4 +1,4 @@
-import { AdditiveBlending, BufferAttribute, BufferGeometry, PerspectiveCamera, Points, Scene, ShaderMaterial, WebGLRenderer } from 'three'
+import { AdditiveBlending, BufferAttribute, BufferGeometry, Color, PerspectiveCamera, Points, Scene, ShaderMaterial, WebGLRenderer } from 'three'
 
 const COUNT = 10_000
 const CLUSTERS = 60
@@ -45,7 +45,7 @@ export function startSky(canvas: HTMLCanvasElement) {
     transparent: true,
     depthWrite: false,
     blending: AdditiveBlending,
-    uniforms: { uTime: { value: 0 }, uGather: { value: 0 }, uPulse: { value: 0 }, uScale: { value: 1 } },
+    uniforms: { uTime: { value: 0 }, uGather: { value: 0 }, uPulse: { value: 0 }, uScale: { value: 1 }, uCool: { value: new Color() }, uWarm: { value: new Color() } },
     vertexShader: /* glsl */ `
       attribute vec3 target;
       attribute float seed;
@@ -66,15 +66,26 @@ export function startSky(canvas: HTMLCanvasElement) {
         gl_PointSize = uScale * (1.4 + seed * 2.2 + vWarm * 2.0 + uPulse * 2.0) * (7.0 / -mv.z);
       }`,
     fragmentShader: /* glsl */ `
+      uniform vec3 uCool, uWarm;
       varying float vAlpha;
       varying float vWarm;
       void main() {
         float d = length(gl_PointCoord - 0.5);
         float glow = smoothstep(0.5, 0.0, d);
-        vec3 color = mix(vec3(0.78, 0.84, 1.0), vec3(1.0, 0.78, 0.34), clamp(vWarm, 0.0, 1.0));
+        vec3 color = mix(uCool, uWarm, clamp(vWarm, 0.0, 1.0));
         gl_FragColor = vec4(color, glow * glow * vAlpha);
       }`,
   })
+
+  // Star colours follow the active palette: read the CSS tokens now and again whenever the theme attribute changes.
+  function readPalette() {
+    const css = getComputedStyle(document.documentElement)
+    material.uniforms.uCool.value.set(css.getPropertyValue('--star').trim())
+    material.uniforms.uWarm.value.set(css.getPropertyValue('--accent').trim())
+  }
+  readPalette()
+  const paletteWatcher = new MutationObserver(readPalette)
+  paletteWatcher.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
 
   const scene = new Scene()
   const points = new Points(geometry, material)
@@ -125,7 +136,10 @@ export function startSky(canvas: HTMLCanvasElement) {
     material.uniforms.uTime.value = now / 1000
     material.uniforms.uGather.value = gather
     material.uniforms.uPulse.value = pulse
-    points.rotation.y = now / 60000
+    // The camera travels with the story: it moves in and tilts as the points gather.
+    points.rotation.y = now / 60000 + gather * 0.6
+    points.rotation.x = gather * 0.22
+    camera.position.z = 9 - gather * 2.6
     renderer.render(scene, camera)
   }
 
@@ -147,6 +161,7 @@ export function startSky(canvas: HTMLCanvasElement) {
     },
     dispose() {
       cancelAnimationFrame(frame)
+      paletteWatcher.disconnect()
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('resize', resize)
       geometry.dispose()

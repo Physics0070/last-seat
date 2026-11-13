@@ -61,12 +61,53 @@ try {
   await landing.keyboard.press('Enter');
   assert.equal(await landing.evaluate(() => document.activeElement.id), 'main');
 
-  const lastBeat = landing.getByRole('heading', { name: 'The last seat belongs to exactly one person.' });
-  assert.equal(await lastBeat.evaluate((el) => getComputedStyle(el).opacity), '0', 'story beats start hidden');
+  // Scroll choreography: story sections are tied to scroll position.
+  const lastBeat = landing.locator('.beat-body').last();
+  const opacity = () => lastBeat.evaluate((el) => Number(getComputedStyle(el).opacity));
+  assert.ok((await opacity()) < 0.1, 'story sections start hidden');
+
+  // The pinned scene: scrolling through it fills the seats one at a time and ends on the last seat.
+  const scrollScene = (fraction) =>
+    landing.locator('.scene').evaluate((el, f) => {
+      const top = el.getBoundingClientRect().top + scrollY;
+      scrollTo(0, top + f * (el.offsetHeight - innerHeight));
+    }, fraction);
+  const seatsOn = () => landing.locator('.big-seat.on').count();
+  await scrollScene(0.02);
+  await landing.waitForTimeout(700);
+  assert.equal(await seatsOn(), 1, 'scene starts with one seat taken');
+  await scrollScene(0.6);
+  await landing.waitForTimeout(900);
+  assert.equal(await seatsOn(), 3, 'scrolling fills seats');
+  await landing.getByRole('heading', { name: 'One seat left. Fifty people are looking at it.' }).waitFor();
+  await landing.screenshot({ path: `${shots}/landing-scene-desktop.png` });
+  await scrollScene(1);
+  await landing.waitForTimeout(700);
+  assert.equal(await seatsOn(), 4, 'scene ends with every seat taken');
+  await landing.getByRole('heading', { name: 'Taken. Exactly once.' }).waitFor();
+
   await lastBeat.scrollIntoViewIfNeeded();
   await landing.waitForTimeout(1500);
-  assert.equal(await lastBeat.evaluate((el) => getComputedStyle(el).opacity), '1', 'story beats appear on scroll');
+  assert.ok((await opacity()) > 0.95, 'story sections are fully shown once scrolled to');
   await landing.screenshot({ path: `${shots}/landing-gathered-desktop.png` });
+
+  // ---------- every colour palette, on the landing page and the board ----------
+  for (const theme of ['aurora', 'midnight', 'nebula', 'ember']) {
+    await landing.evaluate((t) => localStorage.setItem('theme', t), theme);
+    await landing.goto(base);
+    await landing.getByRole('heading', { level: 1 }).waitFor();
+    await landing.mouse.move(320, 320);
+    await landing.mouse.move(340, 300);
+    await landing.locator('.sky canvas.visible').waitFor({ timeout: 15_000 });
+    await landing.waitForTimeout(1200);
+    assert.equal(await landing.evaluate(() => document.documentElement.dataset.theme), theme);
+    await landing.screenshot({ path: `${shots}/theme-${theme}-landing.png` });
+    await landing.goto(`${base}/board`);
+    await landing.locator('.team-list li').first().waitFor();
+    await landing.waitForTimeout(900);
+    await landing.screenshot({ path: `${shots}/theme-${theme}-board.png` });
+  }
+  await landing.evaluate(() => localStorage.removeItem('theme'));
 
   // ---------- reduced motion: no WebGL layer, content simply there ----------
   const calm = await browser.newContext({ ...desktop, reducedMotion: 'reduce' });
@@ -75,7 +116,9 @@ try {
   await calmPage.waitForTimeout(1500);
   assert.equal(await calmPage.evaluate(() => document.documentElement.dataset.motion), 'reduced');
   assert.equal(await calmPage.locator('.sky canvas.visible').count(), 0, 'no 3D layer with reduced motion');
-  assert.equal(await calmPage.getByRole('heading', { name: 'The last seat belongs to exactly one person.' }).evaluate((el) => getComputedStyle(el).opacity), '1');
+  assert.equal(await calmPage.locator('.beat-body').last().evaluate((el) => getComputedStyle(el).opacity), '1', 'nothing is hidden under reduced motion');
+  assert.equal(await calmPage.locator('.scroll-progress').count(), 0);
+  assert.equal(await calmPage.locator('.big-seat.on').count(), 4, 'the scene shows its final state without scrolling');
   await calmPage.screenshot({ path: `${shots}/landing-reduced-motion.png` });
   await calm.close();
 

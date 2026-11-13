@@ -112,17 +112,35 @@ Captured by `npm run test:e2e` from the running app (seeded data plus the accoun
 | --- | --- | --- | --- |
 | ![Lost](docs/screenshots/lost-the-race.png) | ![Board mobile](docs/screenshots/board-mobile.png) | ![Landing mobile](docs/screenshots/landing-mobile.png) | ![Reduced](docs/screenshots/landing-reduced-motion.png) |
 
+### Colour palettes
+
+Four palettes, switchable from the "Colours" menu in the status bar (the choice is remembered). The 3D sky reads
+its star colours from the same CSS tokens, so it changes with the palette. Aurora is the default.
+
+| Aurora | Midnight gold | Nebula | Ember |
+| --- | --- | --- | --- |
+| ![Aurora landing](docs/screenshots/theme-aurora-landing.png) | ![Midnight landing](docs/screenshots/theme-midnight-landing.png) | ![Nebula landing](docs/screenshots/theme-nebula-landing.png) | ![Ember landing](docs/screenshots/theme-ember-landing.png) |
+| ![Aurora board](docs/screenshots/theme-aurora-board.png) | ![Midnight board](docs/screenshots/theme-midnight-board.png) | ![Nebula board](docs/screenshots/theme-nebula-board.png) | ![Ember board](docs/screenshots/theme-ember-board.png) |
+
+### Scroll story
+
+The landing page is driven by scroll position: a progress bar, a hero that recedes, story sections that slide in
+with a numeral drifting behind them, the camera moving into the sky, and a pinned scene where scrolling fills a
+team's seats one at a time until the last one is taken.
+
+![Pinned seat scene](docs/screenshots/landing-scene-desktop.png)
+
 ## Measured
 
-Lighthouse 13, mobile emulation (slow 4G, 4x CPU slowdown), against the production build served locally by `npm start`.
+Lighthouse 13, mobile emulation (slow 4G, 4x CPU slowdown), against the production build served locally by `npm start`, in the default Aurora palette (contrast in the other three palettes was chosen to the same ratios but not run through Lighthouse).
 These are local numbers; a deployed free-tier instance will differ.
 
 | Page | Performance | Accessibility | Best practices | LCP | TBT | CLS |
 | --- | --- | --- | --- | --- | --- | --- |
-| Landing | 93 | 100 | 100 | 2.6 s | 210 ms | 0 |
-| Board | 89 | 100 | 100 | 2.7 s | 320 ms | 0.045 |
+| Landing | 91 | 100 | 100 | 2.7 s | 260 ms | 0 |
+| Board | 86 | 100 | 100 | 2.7 s | 390 ms | 0.045 |
 
-- Initial JavaScript: 107 KB gzipped. three.js (131 KB) and the animation engine (19 KB) are separate chunks.
+- Initial JavaScript: 115 KB gzipped. three.js (131 KB) and the animation engine (19 KB) are separate chunks.
 - The 3D sky is requested on the visitor's first interaction (move, scroll, touch, key), never during page load,
   so Lighthouse measures the page before WebGL starts. Until then a CSS star field is shown.
 - Frame rate with the sky running: 144 fps on the development laptop (headless Chrome, 144 Hz display).
@@ -140,7 +158,7 @@ Scored against [DESIGN_BRIEF.md](DESIGN_BRIEF.md) after the last pass. Self-asse
 | --- | --- | --- |
 | Concept carried through | 8/10 | Sky, constellation, "last seat" and the lost-race panel all tell the same story |
 | Typography and hierarchy | 8/10 | Two variable fonts, fluid scale, one accent colour used sparingly |
-| Motion with purpose | 7/10 | Scroll gathers the sky; story beats rise in view; cards enter and leave. No pinned scroll scenes |
+| Motion with purpose | 8/10 | Scroll drives the sky, the story sections and a pinned seat scene; cards enter and leave |
 | Accessibility | 9/10 | Lighthouse 100; keyboard path and reduced motion are asserted by the browser test |
 | Performance | 8/10 | Meets the 85 target locally; unmeasured on real phones |
 

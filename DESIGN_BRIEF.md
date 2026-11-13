@@ -4,7 +4,7 @@
 
 **Principle.** The sky is atmosphere, never interface. Everything a person needs is plain, fast, accessible HTML in front of it.
 
-**Palette.** Deep navy `#070b1a` background, `#10162e` surfaces, `#edf0ff` text, `#aab4d6` secondary text (8.9:1 on the background). One accent, warm gold `#ffc857`, reserved for the primary action, the leader and the last seat.
+**Palette.** Four switchable palettes on the same tokens: Aurora (deep teal, mint accent; the default), Midnight gold (navy, gold), Nebula (violet, pink) and Ember (charcoal, orange). Each keeps body text above 12:1 and secondary text above 7:1 on its background, and each has one accent, reserved for the primary action, the leader and the last seat. The sky takes its star colours from the active palette.
 
 **Type.** Space Grotesk for headings, Inter for text, both self-hosted variable fonts with `font-display: swap`. Fluid scale from 0.875rem to 4.25rem.
 

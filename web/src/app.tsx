@@ -28,6 +28,9 @@ export function useApp() {
 const loadMotion = () => import('./motionFeatures').then((m) => m.default)
 const NO_STATE: MyState = { teamId: null, pendingRequests: [] }
 const MOTION_KEY = 'motion'
+const THEME_KEY = 'theme'
+const THEMES = { aurora: 'Aurora', midnight: 'Midnight gold', nebula: 'Nebula', ember: 'Ember' } as const
+type Theme = keyof typeof THEMES
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [boot, setBoot] = useState<{ meta: Meta; user: User | null } | null>(null)
@@ -37,7 +40,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<'connecting' | 'live' | 'reconnecting'>('connecting')
   const systemReduced = useMemo(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches, [])
   const [reducedMotion, setReducedMotion] = useState(() => (localStorage.getItem(MOTION_KEY) ?? (systemReduced ? 'reduced' : 'full')) === 'reduced')
+  const [theme, setTheme] = useState<Theme>(() => {
+    const saved = localStorage.getItem(THEME_KEY)
+    return saved && saved in THEMES ? (saved as Theme) : 'aurora'
+  })
   const listeners = useRef(new Set<Listener>())
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   useEffect(() => {
     document.documentElement.dataset.motion = reducedMotion ? 'reduced' : 'full'
@@ -117,9 +128,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       </LazyMotion>
       <div className="statusbar">
         <span className={`live-dot ${live}`} aria-hidden="true" />
-        <span className="muted">{live === 'live' ? 'Live' : live === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</span>
+        <span className="muted live-word">{live === 'live' ? 'Live' : live === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</span>
         {/* Every live change is announced here for screen-reader users. */}
         <span role="status" aria-live="polite" className="status-text">{status}</span>
+        <label className="theme-picker">
+          <span>Colours</span>
+          <select
+            aria-label="Colour palette"
+            value={theme}
+            onChange={(e) => {
+              localStorage.setItem(THEME_KEY, e.target.value)
+              setTheme(e.target.value as Theme)
+            }}
+          >
+            {Object.entries(THEMES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
         <button
           className="btn ghost small"
           aria-pressed={reducedMotion}
