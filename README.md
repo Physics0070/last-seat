@@ -177,11 +177,23 @@ Smoke tests against the live site (these create throwaway `e2e-â€¦` and `live-â€
 - `npm run test:e2e -- https://last-seat-erqy.onrender.com` passes: signup, create a team, a live update without reload,
   two browsers (one on a phone profile) pressing "Join instantly" together for the last seat (one joined, one saw the
   "seat was taken" panel), keyboard skip link, reduced motion, all four palettes.
-- A 10-way concurrent race over plain HTTP at the live API for one free seat: 1 `200`, 9 `409 team_full`,
-  `memberCount` 4 of 4, four membership rows. The 50-user race runs in the automated suite against a local replica set;
-  it was not run against the live site because the per-IP invite limit (30 per 10 minutes) would answer `429` to a
-  single machine sending 50 attempts, which is the limiter doing its job.
-- The load test (`LOAD_TEST.md`) was run locally only. It was not run against the free tier.
+- **The headline scenario, live:** `npm run race -- https://last-seat-erqy.onrender.com 50` (50 people, one free seat, one
+  machine): exactly 1 `200` and 49 `409 team_full`, `memberCount` 4 of 4, four membership rows, no 5xx, no throttling.
+  Correctness holds. **Latency does not:** every racer waited 7.4 to 10.7 s (locally the same scenario takes about 0.5 s).
+- **Why it is slow, measured:** the Atlas cluster is in India (about 20 ms from the developer's laptop) while the Render
+  server is in Oregon, so every database call costs about 240 ms. One uncontended join measured 2.1 s live (about eight
+  sequential database round trips), a plain read 0.65 s, a signup 1.1 s. The free Atlas tier also caps operations per
+  second, and 50 contending transactions retrying against one document spend that budget quickly. The fix is
+  configuration, not code: put the server and the database in the same region (a free Render service in Singapore next to
+  the Mumbai cluster, or an Atlas cluster in Oregon next to the current server). It has **not** been done, so the live
+  numbers below are for the mismatched setup.
+- **Load test, live:** [LOAD_TEST_LIVE.md](LOAD_TEST_LIVE.md): 100 users. It **fails** the p95 < 200 ms target from
+  India (the edge-to-Oregon hop alone puts a request at about 450 ms before the application does anything). From the same
+  laptop, locally, the board does 28,000 req/s at p95 4.6 ms and 1,500 req/s at p95 81 ms with the cache off
+  ([LOAD_TEST.md](LOAD_TEST.md)).
+- The per-IP rate limits were keyed on Cloudflare edge addresses until `TRUST_PROXY` was corrected to 3 (found by measuring
+  how requests arrive); the invite limiter counted valid attempts, not wrong guesses, until the 50-way run from one
+  machine showed 22 of 50 racers throttled. Both are fixed and tested.
 
 ### Local production build
 
@@ -222,7 +234,9 @@ ids, not names; the landing page has no imagery beyond the sky.
 
 ## Not done, stated plainly
 
-- The deployed numbers above were measured from one laptop; they say nothing about other networks or load.
+- The deployed numbers above were measured from one laptop in India against a server in Oregon with the database in India; they say nothing about other networks, and the live latency is dominated by that mismatch (see above).
+- `docker compose up` was not run end to end (Docker Desktop's engine would not start here); the compose file validates and the image contents were checked.
+- Optimistic UI with rollback exists in the UI but no automated test covers the rollback.
 - The sky is plain three.js driven by scroll position, not react-three-fiber, and scroll choreography uses Motion's
   in-view triggers, not GSAP ScrollTrigger timelines.
 - The browser test needs Chrome installed and a running app, so it is not part of CI.

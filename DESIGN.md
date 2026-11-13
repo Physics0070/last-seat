@@ -26,7 +26,7 @@ Server-sent events with ids `<boot>-<seq>`, a replay ring buffer and `Last-Event
 - **Brute-force limits count wrong guesses,** not requests: 80-bit codes are not guessable, and a crowd pressing join on one valid code from one venue connection must get clean `409`s, not throttling.
 - **A hard kill** leaves the dead server's transactions holding locks until MongoDB expires them (60 s): those teams answer `503` + `Retry-After`, never corrupt data; the UI retries with the same key.
 - **Suggestions score everyone without a team in memory** (shared pool, a few ms at 10k users); past ~100k, pre-filter by an index.
-- **Free tier:** the live instance has a fraction of a CPU, so its p95 under 100 concurrent users is far above the local number (see LOAD_TEST.md).
+- **Deployment region matters more than code here.** Live, the server (Oregon) is ~240 ms from the database (India): a join costs ~2 s uncontended and 7-10 s with 50 racing, though correctness is unchanged (measured). Same-region deployment is the fix and is not yet done. Local: 0.5 s for the same 50-way race.
 
 ## With one more week
 Redis for events, limits and cache invalidation so more than one instance is correct · in-transaction idempotency for signup/login · k6 from a separate machine against a paid instance · Playwright for the UI in CI · notifications to a requester on accept/decline · per-team backpressure so a hot team cannot starve the retry budget.

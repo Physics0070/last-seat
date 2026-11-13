@@ -69,6 +69,12 @@ export function idempotency(ctx, { onReplay } = {}) {
     // the response always finds the stored copy. 5xx is not stored: the retry should run again.
     const sendJson = res.json.bind(res);
     res.json = (body) => {
+      const store = requestContext.getStore();
+      // The transaction already stored this exact success next to the change; writing it again would only add latency.
+      if (store?.storedInTransaction && res.statusCode === store.status) {
+        sendJson(body);
+        return res;
+      }
       const stored =
         res.statusCode >= 500
           ? records.deleteOne({ _id })

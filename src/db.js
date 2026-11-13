@@ -119,6 +119,8 @@ async function storeIdempotentResponse(ctx, session, outcome) {
     { $set: { state: 'done', status: store.status, body: JSON.parse(JSON.stringify(outcome.result)) } },
     { session },
   );
+  // Lets the idempotency middleware skip writing the same record again after the response: one round trip saved.
+  store.storedInTransaction = true;
 }
 
 // An unknown commit result must retry the commit itself, never the whole function:
