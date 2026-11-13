@@ -6,6 +6,7 @@ When 50 people hit "join" on a team with one free seat in the same instant, exac
 - **How it works and why:** [DESIGN.md](DESIGN.md)
 - **Load test numbers:** [LOAD_TEST.md](LOAD_TEST.md)
 - **Visual direction:** [DESIGN_BRIEF.md](DESIGN_BRIEF.md)
+- **Live:** https://last-seat-erqy.onrender.com (Render free tier, MongoDB Atlas M0; the first request after a quiet period can take about a minute while the instance wakes)
 
 ## Run it
 
@@ -87,14 +88,14 @@ All bodies are JSON. Errors are `{ "error": { "code", "message", "details"? }, "
 
 ## Deploy (free tier)
 
-Nothing is deployed yet: it needs accounts only you can create.
+Deployed at https://last-seat-erqy.onrender.com. To redo it from scratch:
 
 1. **MongoDB Atlas**: create a free M0 cluster (it is a replica set), a database user, and allow access from anywhere. Copy the `mongodb+srv://` connection string.
 2. **Render**: New → Blueprint → pick this repository. `render.yaml` defines the service. Fill in the two prompted values: `MONGODB_URI` (from step 1) and `SEED_PASSWORD`. `JWT_SECRET` is generated for you.
 3. Open the URL Render gives you. Check `GET /api/health` returns `{"status":"ok"}`, sign up, create a team, and open the board in a second browser to watch it update.
 4. Optional: run `npm run seed` locally with `MONGODB_URI` pointing at Atlas to fill the board.
 
-Free instances sleep when idle; the first request after a pause takes about a minute.
+Free instances sleep when idle; the first request after a pause takes about a minute. Seed the Atlas database from your own machine with `MONGODB_URI` set in your shell (never commit it).
 
 ## Screenshots
 
@@ -132,8 +133,29 @@ team's seats one at a time until the last one is taken.
 
 ## Measured
 
-Lighthouse 13, mobile emulation (slow 4G, 4x CPU slowdown), against the production build served locally by `npm start`, in the default Aurora palette (contrast in the other three palettes was chosen to the same ratios but not run through Lighthouse).
-These are local numbers; a deployed free-tier instance will differ.
+### Deployed (Render free tier + MongoDB Atlas M0)
+
+Lighthouse 13, mobile emulation (slow 4G, 4x CPU slowdown), run from the development laptop against the live URL, Aurora palette.
+
+| Page | Performance | Accessibility | Best practices | SEO | LCP | TBT | CLS |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Landing | 91 | 100 | 100 | 100 | 2.0 s | 310 ms | 0 |
+| Board | 91 | 100 | 100 | 100 | 1.9 s | 350 ms | 0.012 |
+
+Smoke tests against the live site (these create throwaway `e2e-…` and `live-…` accounts and teams in the database):
+
+- `npm run test:e2e -- https://last-seat-erqy.onrender.com` passes: signup, create a team, a live update without reload,
+  two browsers (one on a phone profile) pressing "Join instantly" together for the last seat (one joined, one saw the
+  "seat was taken" panel), keyboard skip link, reduced motion, all four palettes.
+- A 10-way concurrent race over plain HTTP at the live API for one free seat: 1 `200`, 9 `409 team_full`,
+  `memberCount` 4 of 4, four membership rows. The 50-user race runs in the automated suite against a local replica set;
+  it was not run against the live site because the per-IP invite limit (30 per 10 minutes) would answer `429` to a
+  single machine sending 50 attempts, which is the limiter doing its job.
+- The load test (`LOAD_TEST.md`) was run locally only. It was not run against the free tier.
+
+### Local production build
+
+Lighthouse 13, same emulation, against the production build served locally by `npm start`.
 
 | Page | Performance | Accessibility | Best practices | LCP | TBT | CLS |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -170,7 +192,7 @@ ids, not names; the landing page has no imagery beyond the sky.
 
 ## Not done, stated plainly
 
-- Not deployed yet, so every number above is local. `render.yaml` and the steps above are ready.
+- The deployed numbers above were measured from one laptop; they say nothing about other networks or load.
 - The sky is plain three.js driven by scroll position, not react-three-fiber, and scroll choreography uses Motion's
   in-view triggers, not GSAP ScrollTrigger timelines.
 - The browser test needs Chrome installed and a running app, so it is not part of CI.
