@@ -29,7 +29,8 @@ services:
       - { key: INVITE_CODE_BYTES, value: "10" }
       - { key: RATE_LIMIT_WINDOW_MS, value: "60000" }
       - { key: RATE_LIMIT_MAX, value: "600" }
-      - { key: AUTH_RATE_LIMIT_MAX, value: "20" }
+      # Per address per minute. A hackathon venue is one connection for hundreds of people, and signing up costs a password hash.
+      - { key: AUTH_RATE_LIMIT_MAX, value: "300" }
       - { key: REDEEM_RATE_LIMIT_WINDOW_MS, value: "600000" }
       - { key: REDEEM_RATE_LIMIT_IP_MAX, value: "30" }
       - { key: REDEEM_RATE_LIMIT_USER_MAX, value: "10" }

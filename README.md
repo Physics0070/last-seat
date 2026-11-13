@@ -19,7 +19,7 @@ When 50 people hit "join" on a team with one free seat in the same instant, exac
 | Secure: auth, leader-only, brute-force limits, validation | [`src/http.js`](src/http.js), [`src/app.js`](src/app.js), tests in `rules` and `limits-realtime-suggestions` |
 | Audit log | written in the same transaction, `GET /api/teams/:id/audit` (leader only) |
 | Suggestions with the scoring explained | [`src/suggestions.js`](src/suggestions.js), formula in [DESIGN.md](DESIGN.md), unit-tested |
-| 20+ tests in CI; seed; load test | `npm test` (77), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
+| 20+ tests in CI; seed; load test | `npm test` (79), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
 | React UI, phone and keyboard only | [`web/`](web/); the browser test drives a keyboard-only flow |
 | Live URL | https://last-seat-erqy.onrender.com |
 | Bonus: optimistic UI + rollback, Compose, metrics, chaos test | request-to-join and accept/decline are optimistic and roll back on a conflict in the UI (no automated test covers the rollback); [`docker-compose.yml`](docker-compose.yml); `GET /metrics`; [`test/chaos.test.js`](test/chaos.test.js) |
@@ -54,11 +54,12 @@ Log in as `seed-00001@seed.invalid` with your `SEED_PASSWORD`, or sign up.
 | --- | --- |
 | `npm start` / `npm run dev` | API (and the built UI, if `web/dist` exists) on `PORT` |
 | `npm run dev:web` | Vite dev server for the UI, proxying `/api` to `PORT` |
-| `npm test` | 77 tests over real HTTP against a real MongoDB replica set (started automatically), including the chaos test that kills the server |
+| `npm test` | 79 tests over real HTTP against a real MongoDB replica set (started automatically), including the chaos test that kills the server |
 | `npm run test:e2e -- http://localhost:4000` | Drives the real UI in your installed Chrome against a running app: signup, create team, live update, two browsers racing for the last seat, keyboard and reduced-motion checks. Saves the screenshots below |
 | `npm run lint` / `npm run typecheck` | ESLint for the server, oxlint and `tsc` for the UI |
 | `npm run seed` | Inserts `SEED_USERS` users and `SEED_TEAMS` teams; safe to re-run |
 | `npm run loadtest` | autocannon against the board endpoint; writes `LOAD_TEST.md` |
+| `npm run race -- <url> 50` | The headline scenario against any running instance: N people press join on a team with one free seat |
 | `npm run capacity` | probes where one process bends: signup bursts, 50/100/250-way races, 10,000 open live connections, suggestions throughput |
 
 ## What the tests cover
@@ -70,8 +71,8 @@ Nothing is mocked. Each test file boots the app on a real port against its own d
 | `test/races.test.js` | 15 | 50 users for one seat (5 rounds), double-click, one user joining two teams, two accepts for the last seat, the same request accepted twice, leader leaving during joins, last member leaving during a join |
 | `test/idempotency.test.js` | 9 | replay, 20 concurrent duplicates, replayed errors, key reuse, per-user scope, crashed-request recovery, signup replay |
 | `test/rules.test.js` | 30 | auth, validation, min/max, invite expiry and regeneration, leader-only actions, requests, leadership transfer, team deletion, audit log, board pagination and query plan |
-| `test/limits-realtime-suggestions.test.js` | 15 | rate limits triggering, SSE delivery, replay and reset, suggestion scoring |
-| `test/operations.test.js` | 7 | metrics, the board fast path and its rate-limit exemption, password-hash compatibility, suggestion freshness, the atomic idempotency record |
+| `test/limits-realtime-suggestions.test.js` | 16 | rate limits (wrong guesses trip them, a valid crowd does not), SSE delivery, replay and reset, suggestion scoring |
+| `test/operations.test.js` | 8 | metrics, the board fast path and its rate-limit exemption, password-hash compatibility, suggestion freshness, the atomic idempotency record |
 | `test/chaos.test.js` | 1 | the real server is `SIGKILL`ed mid-burst of 90 joins, restarted, every request retried with its key: no corruption, no duplicates, nobody lost, committed-but-unanswered joins replayed |
 
 ## Architecture

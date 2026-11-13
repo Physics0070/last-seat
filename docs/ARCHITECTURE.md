@@ -69,7 +69,7 @@ Server-sent events on `GET /api/hackathons/:id/events`. Each event has id `<boot
 
 - JWT in an `httpOnly`, `SameSite=Lax` cookie; argon2id password hashes; login compares against a dummy hash for unknown emails.
 - Leader-only actions are checked on the server, inside the transaction where it matters.
-- Invite codes: 80 bits from `crypto.randomBytes`, stored as SHA-256, expiring. Redemption is rate-limited per IP and per user. Unknown and expired codes return the same response.
+- Invite codes: 80 bits from `crypto.randomBytes`, stored as SHA-256, expiring. Brute-force limits spend their budget on **wrong guesses** (a code that does not exist), per address and per user; a valid code answered "team is full" is not a guess, so a crowd behind one venue connection racing for a seat is never throttled (`src/failure-limiter.js`, tested with 40 users and a budget of 3). Raw request volume is capped separately per address, and signups/logins at 300 per minute per address, because a hackathon venue is one connection for hundreds of people. Behind Render the client address is three proxy hops out (`TRUST_PROXY=3`, measured), otherwise users would share a Cloudflare edge address as their key. Unknown and expired codes return the same response.
 - Every body, query and param goes through a strict zod schema (unknown fields rejected). One error shape, no stack traces. All configuration is validated at startup with no in-code defaults.
 
 ## Suggestions

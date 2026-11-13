@@ -6,12 +6,13 @@ import argon2 from 'argon2';
 import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import express from 'express';
-import { rateLimit } from 'express-rate-limit';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import { z } from 'zod';
 import { isDuplicateKey } from './db.js';
 import { createEventBus } from './events.js';
+import { failureLimiter } from './failure-limiter.js';
 import { AppError, SESSION_COOKIE, cookieOptions, errorHandler, notFound, objectId, parse, readUser, requireAuth, signSession } from './http.js';
 import { idempotency } from './idempotency.js';
 import { requestContext } from './request-context.js';
@@ -129,8 +130,11 @@ export async function createApp(ctx) {
     });
   // ponytail: counters live in process memory (one instance). Scale-out path: rate-limit-redis as the store.
   const authLimit = limiter(config.RATE_LIMIT_WINDOW_MS, config.AUTH_RATE_LIMIT_MAX);
-  const redeemIpLimit = limiter(config.REDEEM_RATE_LIMIT_WINDOW_MS, config.REDEEM_RATE_LIMIT_IP_MAX);
-  const redeemUserLimit = limiter(config.REDEEM_RATE_LIMIT_WINDOW_MS, config.REDEEM_RATE_LIMIT_USER_MAX, (req) => String(req.user.id));
+  // Invite brute-force protection spends its budget on wrong guesses (404 invite_invalid), per address and per user.
+  // Valid codes on a full team are not guesses, so a crowd behind one connection is never throttled for racing.
+  const wrongGuess = (res) => res.statusCode === 404;
+  const redeemIpLimit = failureLimiter({ windowMs: config.REDEEM_RATE_LIMIT_WINDOW_MS, max: config.REDEEM_RATE_LIMIT_IP_MAX, key: (req) => ipKeyGenerator(req.ip), isFailure: wrongGuess });
+  const redeemUserLimit = failureLimiter({ windowMs: config.REDEEM_RATE_LIMIT_WINDOW_MS, max: config.REDEEM_RATE_LIMIT_USER_MAX, key: (req) => String(req.user.id), isFailure: wrongGuess });
 
   const api = express.Router();
   api.use(limiter(config.RATE_LIMIT_WINDOW_MS, config.RATE_LIMIT_MAX));

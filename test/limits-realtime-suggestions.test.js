@@ -3,7 +3,7 @@ import { scoreMatch, utcOffsetMinutes } from '../src/suggestions.js';
 import { startApp } from './helpers.js';
 
 describe('invite brute-force protection', () => {
-  it('limits redemption attempts per user', async () => {
+  it('limits wrong guesses per user', async () => {
     const t = await startApp({ REDEEM_RATE_LIMIT_USER_MAX: '3' });
     try {
       const [attacker, bystander] = await t.users(2);
@@ -14,7 +14,7 @@ describe('invite brute-force protection', () => {
 
       const blocked = await guess();
       expect(blocked.body.error.code).toBe('rate_limited');
-      expect(blocked.headers['ratelimit']).toBeDefined();
+      expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
       // The limit is per user: someone else on the same IP is unaffected.
       expect((await bystander.post('/api/invites/redeem', { code: 'AAAA-AAAA-AAAA-AAAA-AAAA' })).status).toBe(404);
     } finally {
@@ -22,13 +22,30 @@ describe('invite brute-force protection', () => {
     }
   });
 
-  it('limits redemption attempts per IP across accounts', async () => {
+  it('limits wrong guesses per IP across accounts', async () => {
     const t = await startApp({ REDEEM_RATE_LIMIT_IP_MAX: '4' });
     try {
       const accounts = await t.users(6);
       const results = [];
       for (const u of accounts) results.push((await u.post('/api/invites/redeem', { code: 'BBBB-BBBB-BBBB-BBBB-BBBB' })).status);
       expect(results).toEqual([404, 404, 404, 404, 429, 429]);
+    } finally {
+      await t.close();
+    }
+  });
+
+  it('does not throttle a crowd pressing join with a valid code, however small the guess budget', async () => {
+    const t = await startApp({ REDEEM_RATE_LIMIT_IP_MAX: '3', REDEEM_RATE_LIMIT_USER_MAX: '3' });
+    try {
+      const team = await t.team(3); // one free seat
+      const crowd = await t.users(40);
+
+      const responses = await Promise.all(crowd.map((u) => u.post('/api/invites/redeem', { code: team.code })));
+
+      const codes = responses.map((r) => (r.status === 200 ? 'ok' : r.body.error.code));
+      expect(codes.filter((c) => c === 'rate_limited')).toHaveLength(0);
+      expect(codes.filter((c) => c === 'ok')).toHaveLength(1);
+      expect(codes.filter((c) => c === 'team_full')).toHaveLength(39);
     } finally {
       await t.close();
     }

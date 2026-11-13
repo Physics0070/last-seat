@@ -17,7 +17,8 @@
     "seed": "node scripts/seed.js",
     "loadtest": "node scripts/loadtest.js",
     "test:e2e": "node scripts/e2e.js",
-    "capacity": "node scripts/capacity.js"
+    "capacity": "node scripts/capacity.js",
+    "race": "node scripts/race.js"
   },
   "dependencies": {
     "argon2": "^0.45.2",

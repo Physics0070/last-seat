@@ -23,6 +23,7 @@ Server-sent events with ids `<boot>-<seq>`, a replay ring buffer and `Last-Event
 ## Trade-offs
 - **Single instance.** The event bus, rate-limit counters and board cache live in process memory. Scale-out: Redis streams + `rate-limit-redis`.
 - **A cached board** (1 s TTL, cleared on every change) answered before any middleware: it is why p95 is 145 ms locally, and why board reads are not rate limited.
+- **Brute-force limits count wrong guesses,** not requests: 80-bit codes are not guessable, and a crowd pressing join on one valid code from one venue connection must get clean `409`s, not throttling.
 - **A hard kill** leaves the dead server's transactions holding locks until MongoDB expires them (60 s): those teams answer `503` + `Retry-After`, never corrupt data; the UI retries with the same key.
 - **Suggestions score everyone without a team in memory** (shared pool, a few ms at 10k users); past ~100k, pre-filter by an index.
 - **Free tier:** the live instance has a fraction of a CPU, so its p95 under 100 concurrent users is far above the local number (see LOAD_TEST.md).
