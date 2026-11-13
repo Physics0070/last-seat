@@ -5,6 +5,8 @@ services:
     name: last-seat
     runtime: node
     plan: free
+    # Next to the database (Atlas, India). In Oregon every database call cost about 240 ms.
+    region: singapore
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/health

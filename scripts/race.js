@@ -58,8 +58,13 @@ const started = performance.now();
 const results = await Promise.all(
   contenders.map(async (u) => {
     const sent = performance.now();
-    const res = await u.post('/invites/redeem', { code });
-    return { ms: Math.round(performance.now() - sent), status: res.status, code: res.status === 200 ? 'ok' : (await res.json()).error.code };
+    try {
+      const res = await u.post('/invites/redeem', { code });
+      return { ms: Math.round(performance.now() - sent), status: res.status, code: res.status === 200 ? 'ok' : (await res.json()).error.code };
+    } catch (err) {
+      // A connection dropped on the way (this client, a proxy). Recorded, not hidden: it is neither a win nor a clean 409.
+      return { ms: Math.round(performance.now() - sent), status: 0, code: `network_error:${err.cause?.code ?? err.message}` };
+    }
   }),
 );
 const totalMs = Math.round(performance.now() - started);
@@ -77,6 +82,7 @@ const verdict = {
   signupRetriesDueToRateLimit: throttled,
   exactlyOneWinner: tally.ok === 1 && team.team.memberCount === team.team.maxSize && team.members.length === team.team.maxSize,
   anyServerError: results.some((r) => r.status >= 500),
+  networkErrors: results.filter((r) => r.status === 0).length,
 };
 console.log(JSON.stringify(verdict, null, 2));
 process.exitCode = verdict.exactlyOneWinner && !verdict.anyServerError ? 0 : 1;

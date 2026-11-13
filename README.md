@@ -6,7 +6,7 @@ When 50 people hit "join" on a team with one free seat in the same instant, exac
 - **One-page design doc:** [DESIGN.md](DESIGN.md) (the long version: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
 - **Load test numbers:** [LOAD_TEST.md](LOAD_TEST.md)
 - **Visual direction:** [DESIGN_BRIEF.md](DESIGN_BRIEF.md)
-- **Live:** https://last-seat-erqy.onrender.com (Render free tier, MongoDB Atlas M0; the first request after a quiet period can take about a minute while the instance wakes)
+- **Live:** https://last-seat-sg.onrender.com (Render free tier in Singapore, MongoDB Atlas M0; the first request after a quiet period can take about a minute while the instance wakes)
 
 ## Against the brief
 
@@ -21,7 +21,7 @@ When 50 people hit "join" on a team with one free seat in the same instant, exac
 | Suggestions with the scoring explained | [`src/suggestions.js`](src/suggestions.js), formula in [DESIGN.md](DESIGN.md), unit-tested |
 | 20+ tests in CI; seed; load test | `npm test` (79), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
 | React UI, phone and keyboard only | [`web/`](web/); the browser test drives a keyboard-only flow |
-| Live URL | https://last-seat-erqy.onrender.com |
+| Live URL | https://last-seat-sg.onrender.com |
 | Bonus: optimistic UI + rollback, Compose, metrics, chaos test | request-to-join and accept/decline are optimistic and roll back on a conflict in the UI (no automated test covers the rollback); [`docker-compose.yml`](docker-compose.yml); `GET /metrics`; [`test/chaos.test.js`](test/chaos.test.js) |
 
 ## Run it
@@ -118,7 +118,7 @@ All bodies are JSON. Errors are `{ "error": { "code", "message", "details"? }, "
 
 ## Deploy (free tier)
 
-Deployed at https://last-seat-erqy.onrender.com. To redo it from scratch:
+Deployed at https://last-seat-sg.onrender.com. To redo it from scratch:
 
 1. **MongoDB Atlas**: create a free M0 cluster (it is a replica set), a database user, and allow access from anywhere. Copy the `mongodb+srv://` connection string.
 2. **Render**: New → Blueprint → pick this repository. `render.yaml` defines the service. Fill in the two prompted values: `MONGODB_URI` (from step 1) and `SEED_PASSWORD`. `JWT_SECRET` is generated for you.
@@ -163,37 +163,40 @@ team's seats one at a time until the last one is taken.
 
 ## Measured
 
-### Deployed (Render free tier + MongoDB Atlas M0)
+### Deployed (Render free tier in Singapore + MongoDB Atlas M0 in India)
 
-Lighthouse 13, mobile emulation (slow 4G, 4x CPU slowdown), run from the development laptop against the live URL, Aurora palette.
+Everything below was measured from one laptop in India against the live URL, with nothing raised or switched off.
 
-| Page | Performance | Accessibility | Best practices | SEO | LCP | TBT | CLS |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Landing | 91 | 100 | 100 | 100 | 2.0 s | 310 ms | 0 |
-| Board | 91 | 100 | 100 | 100 | 1.9 s | 350 ms | 0.012 |
+**Correctness under concurrency, live** (`npm run race -- https://last-seat-sg.onrender.com <n>`, all racers from one machine):
 
-Smoke tests against the live site (these create throwaway `e2e-…` and `live-…` accounts and teams in the database):
+| Racers for one free seat | `200` | `409 team_full` | 5xx / throttled / dropped | Team afterwards | Response time |
+| --- | --- | --- | --- | --- | --- |
+| 50 | 1 | 49 | 0 | 4 of 4 members, 4 rows | 1.1 to 4.4 s |
+| 100 | 1 | 99 | 0 | 4 of 4 members, 4 rows | 1.3 to 5.8 s |
 
-- `npm run test:e2e -- https://last-seat-erqy.onrender.com` passes: signup, create a team, a live update without reload,
-  two browsers (one on a phone profile) pressing "Join instantly" together for the last seat (one joined, one saw the
-  "seat was taken" panel), keyboard skip link, reduced motion, all four palettes.
-- **The headline scenario, live:** `npm run race -- https://last-seat-erqy.onrender.com 50` (50 people, one free seat, one
-  machine): exactly 1 `200` and 49 `409 team_full`, `memberCount` 4 of 4, four membership rows, no 5xx, no throttling.
-  Correctness holds. **Latency does not:** every racer waited 7.4 to 10.7 s (locally the same scenario takes about 0.5 s).
-- **Why it is slow, measured:** the Atlas cluster is in India (about 20 ms from the developer's laptop) while the Render
-  server is in Oregon, so every database call costs about 240 ms. One uncontended join measured 2.1 s live (about eight
-  sequential database round trips), a plain read 0.65 s, a signup 1.1 s. The free Atlas tier also caps operations per
-  second, and 50 contending transactions retrying against one document spend that budget quickly. The fix is
-  configuration, not code: put the server and the database in the same region (a free Render service in Singapore next to
-  the Mumbai cluster, or an Atlas cluster in Oregon next to the current server). It has **not** been done, so the live
-  numbers below are for the mismatched setup.
-- **Load test, live:** [LOAD_TEST_LIVE.md](LOAD_TEST_LIVE.md): 100 users. It **fails** the p95 < 200 ms target from
-  India (the edge-to-Oregon hop alone puts a request at about 450 ms before the application does anything). From the same
-  laptop, locally, the board does 28,000 req/s at p95 4.6 ms and 1,500 req/s at p95 81 ms with the cache off
-  ([LOAD_TEST.md](LOAD_TEST.md)).
-- The per-IP rate limits were keyed on Cloudflare edge addresses until `TRUST_PROXY` was corrected to 3 (found by measuring
-  how requests arrive); the invite limiter counted valid attempts, not wrong guesses, until the 50-way run from one
-  machine showed 22 of 50 racers throttled. Both are fixed and tested.
+One uncontended join takes about 0.5 s, creating a team 0.6 s, a signup 0.6 s.
+
+**The browser test passes against the live site** (`npm run test:e2e -- https://last-seat-sg.onrender.com`): signup, create a team, a live
+update without reload, two browsers pressing "Join instantly" together (one joined, one saw the "seat was taken" panel),
+a keyboard-only login, create-team and leave flow, reduced motion, all four palettes.
+
+**Load test, live: it does not meet p95 < 200 ms from here.** [LOAD_TEST_LIVE.md](LOAD_TEST_LIVE.md): with 100 users each
+asking about once a second, p50 is 107 ms and p95 is 418 ms; flat out, 351 req/s at p95 997 ms; every response was a
+`200`. A request that does no application work at all (`/api/meta`) takes about 186 ms to its first byte from this laptop,
+so the target is not reachable over this network path on this tier. The same code locally: 28,000 req/s at p95 4.6 ms,
+and 1,500 req/s at p95 81 ms with the cache off ([LOAD_TEST.md](LOAD_TEST.md)).
+
+**Lighthouse** (mobile emulation, two runs each): landing 94 and 99 for performance, board 78 and 80; accessibility, best
+practices and SEO are 100 on both. The board's score was 91 on an earlier deployment; I have not found out why it is
+lower here.
+
+**What moving regions did.** The first deployment ran in Oregon while the database is in India, about 240 ms apart, and a
+join makes about eight database calls. There, one join took 2.1 s and the 50-way race 7.4 to 10.7 s. Moving the server
+next to the database (same code) brought those to 0.5 s and 1.1 to 4.4 s.
+
+**Two bugs found only by testing the live site,** both fixed and covered by tests: per-address rate limits were keyed on
+proxy addresses until `TRUST_PROXY` was set to the measured depth (3), and the invite limiter counted valid attempts
+instead of wrong guesses, which throttled 22 of 50 racers coming from one machine.
 
 ### Local production build
 
@@ -234,7 +237,7 @@ ids, not names; the landing page has no imagery beyond the sky.
 
 ## Not done, stated plainly
 
-- The deployed numbers above were measured from one laptop in India against a server in Oregon with the database in India; they say nothing about other networks, and the live latency is dominated by that mismatch (see above).
+- The deployed numbers above were measured from one laptop in India; they say nothing about other networks. The live load test misses the p95 target (see above).
 - `docker compose up` was not run end to end (Docker Desktop's engine would not start here); the compose file validates and the image contents were checked.
 - Optimistic UI with rollback exists in the UI but no automated test covers the rollback.
 - The sky is plain three.js driven by scroll position, not react-three-fiber, and scroll choreography uses Motion's
