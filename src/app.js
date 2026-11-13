@@ -83,10 +83,17 @@ export async function createApp(ctx) {
   app.use((req, res, next) => {
     if (req.method !== 'GET' || !BOARD_URL.test(req.url)) return next();
     const hit = boardCache.get(req.originalUrl);
-    if (!hit?.ready || hit.expires <= Date.now()) return next();
-    ctx.metrics.inc('board_fast_path_hits_total');
-    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': hit.ready.length, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-cache' });
-    return res.end(hit.ready);
+    if (!hit || hit.expires <= Date.now()) return next();
+    const send = (bytes) => {
+      ctx.metrics.inc('board_fast_path_hits_total');
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': bytes.length, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-cache' });
+      res.end(bytes);
+    };
+    if (hit.ready) return send(hit.ready);
+    // The page is being built right now. Wait for that one query instead of running the full stack (and spending
+    // rate-limit budget) once per waiting request: on a slow instance a hundred readers can pile up behind one rebuild.
+    // If the query fails, fall through to the normal path, which reports the error properly.
+    hit.body.then((json) => send(Buffer.from(json)), () => next());
   });
 
   app.use(

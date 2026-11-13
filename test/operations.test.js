@@ -57,6 +57,20 @@ describe('the board fast path', () => {
     }
   });
 
+  it('holds a crowd that arrives while a page is being built on that one query, instead of throttling it', async () => {
+    const t = await startApp({ RATE_LIMIT_MAX: '5' });
+    try {
+      const path = `/api/hackathons/${t.hid}/teams?limit=7`; // a page nobody has asked for yet
+      const crowd = await Promise.all(Array.from({ length: 100 }, () => t.anon.get(path)));
+
+      expect(crowd.filter((r) => r.status !== 200)).toHaveLength(0);
+      const hits = Number(/^board_fast_path_hits_total (\d+)$/m.exec((await t.anon.get('/metrics')).text)[1]);
+      expect(hits).toBeGreaterThanOrEqual(90);
+    } finally {
+      await t.close();
+    }
+  });
+
   it('never serves a page older than the last committed change', async () => {
     const t = await startApp();
     try {
