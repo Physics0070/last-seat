@@ -1,4 +1,5 @@
 // End-to-end check of the real UI in a real browser (your installed Chrome, via playwright-core).
+// Usage: node scripts/e2e.js <base url> [screenshot folder]. The database needs seed data (npm run seed).
 //   node scripts/e2e.js http://localhost:4000
 // It signs up real users, creates a team, fills it to one free seat, then has two browsers click
 // "Join instantly" at the same moment. It asserts what each person sees and saves screenshots.
@@ -9,7 +10,7 @@ import { chromium, devices } from 'playwright-core';
 
 const base = process.argv[2];
 if (!base) throw new Error('usage: node scripts/e2e.js <base url of a running app>');
-const shots = 'docs/screenshots';
+const shots = process.argv[3] ?? 'docs/screenshots';
 mkdirSync(shots, { recursive: true });
 
 const run = randomBytes(4).toString('hex');
