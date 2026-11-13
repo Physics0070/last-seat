@@ -205,13 +205,16 @@ details[open] > summary { margin-bottom: var(--space-3); }
 /* The "last seat" state: the one visual moment the product is named after. */
 .team.last-seat { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 32px -8px color-mix(in srgb, var(--accent) 50%, transparent); }
 .team.last-seat .dot:not(.on) { position: relative; border-color: var(--accent); color: var(--accent); }
+/* Cards and the lost-race panel arrive with a CSS animation: no animation library on the board. */
+.team-list .team { animation: rise var(--dur) var(--ease) backwards; }
+.team.full { opacity: 0.55; transition: opacity var(--dur-slow) var(--ease); }
 .seats { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; font-weight: 600; }
 .seat-dots { display: inline-flex; gap: 5px; }
 .dot { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--muted); transition: background var(--dur) var(--ease), border-color var(--dur); }
 .dot.on { background: var(--text); border-color: var(--text); }
 
 /* Losing the race: a star drifts away, the panel settles in. Calm, not an error shake. */
-.lost { position: relative; margin-bottom: var(--space-5); border-color: var(--link); overflow: hidden; }
+.lost { position: relative; margin-bottom: var(--space-5); border-color: var(--link); overflow: hidden; animation: rise var(--dur-slow) var(--ease) backwards; }
 .fading-star { position: absolute; right: var(--space-5); top: var(--space-5); width: 10px; height: 10px; border-radius: 50%; background: var(--accent); animation: drift 1.6s var(--ease) forwards; }
 @keyframes drift { to { transform: translate(60px, -40px) scale(0.2); opacity: 0; } }
 

@@ -1,5 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { LazyMotion, MotionConfig } from 'motion/react'
+import { Suspense, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api, type LiveEvent, type Meta, type MyState, type User } from './api'
 import { Sky } from './Sky'
@@ -25,7 +24,6 @@ export function useApp() {
   return ctx
 }
 
-const loadMotion = () => import('./motionFeatures').then((m) => m.default)
 const NO_STATE: MyState = { teamId: null, pendingRequests: [] }
 const MOTION_KEY = 'motion'
 const THEME_KEY = 'theme'
@@ -80,25 +78,47 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // One EventSource for the whole app. The browser reconnects by itself and sends Last-Event-ID,
   // so the server replays what was missed; if it cannot, it sends `reset` and every view refetches.
+  // It is opened once the page has loaded and gone idle, so a never-ending request does not compete with the first
+  // paint. Views fetch on their own first; on the first open every view refetches once, so nothing that happened
+  // in between is missed.
   useEffect(() => {
     if (!hackathonId) return
-    const source = new EventSource(`/api/hackathons/${hackathonId}/events`)
+    let source: EventSource | null = null
+    let cancelled = false
     const emit = (event: LiveEvent) => listeners.current.forEach((l) => l(event))
-    source.onopen = () => setLive('live')
-    source.onerror = () => setLive('reconnecting')
     // The server may resend an event under a new number after a crash; its eventId stays the same, so drop repeats.
     const seen = new Set<string>()
-    source.onmessage = (e) => {
-      const event = JSON.parse(e.data)
-      if (event.eventId) {
-        if (seen.has(event.eventId)) return
-        seen.add(event.eventId)
-        if (seen.size > 2000) seen.delete(seen.values().next().value as string)
+    const open = () => {
+      if (cancelled) return
+      let first = true
+      source = new EventSource(`/api/hackathons/${hackathonId}/events`)
+      source.onopen = () => {
+        setLive('live')
+        if (first) {
+          first = false
+          emit({ type: 'reset' })
+        }
       }
-      emit(event)
+      source.onerror = () => setLive('reconnecting')
+      source.onmessage = (e) => {
+        const event = JSON.parse(e.data)
+        if (event.eventId) {
+          if (seen.has(event.eventId)) return
+          seen.add(event.eventId)
+          if (seen.size > 2000) seen.delete(seen.values().next().value as string)
+        }
+        emit(event)
+      }
+      source.addEventListener('reset', () => emit({ type: 'reset' }))
     }
-    source.addEventListener('reset', () => emit({ type: 'reset' }))
-    return () => source.close()
+    const whenIdle = () => (window.requestIdleCallback ? window.requestIdleCallback(open, { timeout: 2000 }) : window.setTimeout(open, 300))
+    if (document.readyState === 'complete') whenIdle()
+    else window.addEventListener('load', whenIdle, { once: true })
+    return () => {
+      cancelled = true
+      window.removeEventListener('load', whenIdle)
+      source?.close()
+    }
   }, [hackathonId])
 
   const onLive = useCallback((listener: Listener) => {
@@ -133,9 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppState = { meta: boot.meta, user: boot.user, setUser, my, refreshMy, onLive, announce, reducedMotion }
   return (
     <AppContext.Provider value={value}>
-      <LazyMotion features={loadMotion} strict>
-        <MotionConfig reducedMotion={reducedMotion ? 'always' : 'never'}>{children}</MotionConfig>
-      </LazyMotion>
+      {children}
       <div className="statusbar">
         <span className={`live-dot ${live}`} aria-hidden="true" />
         <span className="muted live-word">{live === 'live' ? 'Live' : live === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</span>
@@ -212,7 +230,9 @@ export function Layout() {
         </nav>
       </header>
       <main id="main" ref={main} tabIndex={-1} key={location.pathname} className="page">
-        <Outlet />
+        <Suspense fallback={<p className="muted" aria-busy="true">Loading…</p>}>
+          <Outlet />
+        </Suspense>
       </main>
       <footer className="footer muted">{meta.hackathon.name} · teams of {meta.hackathon.minTeamSize}–{meta.hackathon.maxTeamSize}</footer>
     </>

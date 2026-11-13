@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { AnimatePresence, m } from 'motion/react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api, ApiError, errorMessage, type Invite, type Suggestion, type Team } from './api'
 import { useApp } from './app'
@@ -132,9 +131,8 @@ export function Board() {
         </label>
       </div>
 
-      <AnimatePresence>
       {lost && (
-        <m.section className="card lost" aria-labelledby="lost-title" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.5, ease: [0.2, 0.8, 0.2, 1] }}>
+        <section className="card lost" aria-labelledby="lost-title">
           <span className="fading-star" aria-hidden="true" />
           <h2 id="lost-title" tabIndex={-1} ref={(el) => el?.focus()}>That seat was taken a moment ago</h2>
           <p>Someone reached it first. Nothing is wrong on your side. {lost.length ? 'These teams fit you best right now:' : 'No other open teams match yet. Create your own?'}</p>
@@ -152,9 +150,8 @@ export function Board() {
             ))}
           </ul>
           <button className="btn ghost small" onClick={() => setLost(null)}>Dismiss</button>
-        </m.section>
+        </section>
       )}
-      </AnimatePresence>
 
       {error && (
         <div className="card" role="alert">
@@ -171,14 +168,9 @@ export function Board() {
       )}
       {page && page.items.length > 0 && (
         <ul className="team-list">
-          <AnimatePresence initial={false}>
           {page.items.map((team) => (
-            <m.li
+            <li
               key={team.id}
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: team.openSeats === 0 ? 0.55 : 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.35, ease: [0.2, 0.8, 0.2, 1] }}
               className={`card team${team.openSeats === 1 ? ' last-seat' : ''}${team.openSeats === 0 ? ' full' : ''}`}>
               <div className="team-top">
                 <h2><Link to={`/teams/${team.id}`}>{team.name}</Link></h2>
@@ -197,9 +189,8 @@ export function Board() {
                 )}
               </div>
               {cardError?.teamId === team.id && <p role="alert" className="error">{cardError.message}</p>}
-            </m.li>
+            </li>
           ))}
-          </AnimatePresence>
         </ul>
       )}
       {page?.nextCursor && <button className="btn center" onClick={loadMore} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Show more teams'}</button>}

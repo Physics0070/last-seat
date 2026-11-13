@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import argon2 from 'argon2';
@@ -66,6 +67,12 @@ export async function createApp(ctx) {
   ctx.metrics.describeGauge('board_cache_entries', 'Serialized board pages currently cached.', () => boardCache.size);
   ctx.metrics.describeGauge('process_resident_memory_bytes', 'Resident memory of this process.', () => process.memoryUsage.rss());
   ctx.metrics.describeGauge('process_uptime_seconds', 'Seconds since this process started.', () => Math.round(process.uptime()));
+  // Event-loop delay over the last minute: how long ready work waited for the single JavaScript thread.
+  const loopDelay = monitorEventLoopDelay({ resolution: 10 });
+  loopDelay.enable();
+  setInterval(() => loopDelay.reset(), 60_000).unref();
+  ctx.metrics.describeGauge('event_loop_delay_p99_ms', 'p99 event-loop delay over the last minute, in ms.', () => (loopDelay.percentile(99) / 1e6).toFixed(1));
+  ctx.metrics.describeGauge('event_loop_delay_mean_ms', 'Mean event-loop delay over the last minute, in ms.', () => (loopDelay.mean / 1e6).toFixed(1));
 
   // Serialized board pages by URL. Every committed team change clears the map, so a reader never sees a page
   // older than the last event this instance published; the TTL bounds staleness from other instances' writes.
@@ -87,16 +94,25 @@ export async function createApp(ctx) {
     if (req.method !== 'GET' || !BOARD_URL.test(req.url)) return next();
     const hit = boardCache.get(req.originalUrl);
     if (!hit || hit.expires <= Date.now()) return next();
-    const send = (bytes) => {
+    const started = process.hrtime.bigint();
+    const send = (bytes, how) => {
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
       ctx.metrics.inc('board_fast_path_hits_total');
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': bytes.length, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-cache' });
+      ctx.metrics.observe('http_request_duration_ms', { method: 'GET', route: '/api/hackathons/:id/teams (fast path)', status: 200 }, ms);
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': bytes.length,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-cache',
+        'Server-Timing': `cache;desc="${how}", app;dur=${ms.toFixed(2)}`,
+      });
       res.end(bytes);
     };
-    if (hit.ready) return send(hit.ready);
+    if (hit.ready) return send(hit.ready, 'hit');
     // The page is being built right now. Wait for that one query instead of running the full stack (and spending
     // rate-limit budget) once per waiting request: on a slow instance a hundred readers can pile up behind one rebuild.
     // If the query fails, fall through to the normal path, which reports the error properly.
-    hit.body.then((json) => send(Buffer.from(json)), () => next());
+    hit.body.then((json) => send(Buffer.from(json), 'shared'), () => next());
   });
 
   app.use(
@@ -112,6 +128,15 @@ export async function createApp(ctx) {
   app.use(helmet());
   app.use((req, res, next) => {
     const started = process.hrtime.bigint();
+    // Handlers push [name, ms, description?]; the header is written just before the response headers go out.
+    res.locals.timings = [];
+    const writeHead = res.writeHead;
+    res.writeHead = function writeHeadWithTiming(...args) {
+      const total = Number(process.hrtime.bigint() - started) / 1e6;
+      const parts = res.locals.timings.map(([name, ms, desc]) => `${name};dur=${ms.toFixed(2)}${desc ? `;desc="${desc}"` : ''}`);
+      if (!this.headersSent) this.setHeader('Server-Timing', [...parts, `app;dur=${total.toFixed(2)}`].join(', '));
+      return writeHead.apply(this, args);
+    };
     res.on('finish', () => {
       // Express clears baseUrl before 'finish', so the router's mount point is restored from the URL.
       const route = req.route ? `${req.originalUrl.startsWith('/api/') ? '/api' : ''}${req.route.path}` : 'static_or_unmatched';
@@ -177,7 +202,9 @@ export async function createApp(ctx) {
     // Tell the transaction helper what success looks like, so a keyed request's response commits with the change.
     const store = requestContext.getStore();
     if (store) store.status = status;
+    const txnStarted = performance.now();
     const { result, events } = await fn(req, actorOf(req));
+    res.locals.timings.push(['txn', performance.now() - txnStarted]);
     if (events.length) bump();
     // Sending happens immediately; only the sequence stamp waits on the database, and the response does not wait for it.
     bus.publish(events).catch((err) => req.log.error({ err }, 'failed to stamp published events'));
@@ -251,8 +278,16 @@ export async function createApp(ctx) {
     if (!entry || entry.expires <= Date.now()) {
       const version = boardVersion;
       // The promise itself is cached, so 100 concurrent misses for a page share one query (no stampede on expiry).
-      const body = teams.listBoard(ctx, hackathonId(req), page(req)).then(JSON.stringify);
-      entry = { body, ready: null, expires: Date.now() + config.BOARD_CACHE_TTL_MS };
+      const timing = {};
+      const queryStarted = performance.now();
+      const body = teams.listBoard(ctx, hackathonId(req), page(req)).then((result) => {
+        const serialiseStarted = performance.now();
+        const json = JSON.stringify(result);
+        timing.db = serialiseStarted - queryStarted;
+        timing.ser = performance.now() - serialiseStarted;
+        return json;
+      });
+      entry = { body, ready: null, timing, owner: req, expires: Date.now() + config.BOARD_CACHE_TTL_MS };
       if (config.BOARD_CACHE_TTL_MS > 0) {
         if (boardCache.size >= config.BOARD_CACHE_MAX_ENTRIES) boardCache.clear();
         boardCache.set(key, entry);
@@ -265,7 +300,10 @@ export async function createApp(ctx) {
         }, drop);
       }
     }
-    res.type('json').send(await entry.body);
+    const json = await entry.body;
+    if (entry.owner === req) res.locals.timings.push(['db', entry.timing.db], ['ser', entry.timing.ser]);
+    else res.locals.timings.push(['cache', 0, 'shared']);
+    res.type('json').send(json);
   });
 
   api.get('/hackathons/:id/events', (req, res) => bus.subscribe(req, res, hackathonId(req)));

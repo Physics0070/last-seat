@@ -30,6 +30,28 @@ describe('metrics', () => {
   });
 });
 
+describe('Server-Timing', () => {
+  it('reports database and serialisation time on a miss, the cache on a hit, and transaction time on a write', async () => {
+    const t = await startApp();
+    try {
+      const path = `/api/hackathons/${t.hid}/teams?limit=9`;
+      const miss = await t.anon.get(path);
+      const hit = await t.anon.get(path);
+      const u = await t.user();
+      const write = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Timed' });
+
+      expect(miss.headers['server-timing']).toMatch(/^db;dur=[\d.]+, ser;dur=[\d.]+, app;dur=[\d.]+$/);
+      expect(hit.headers['server-timing']).toMatch(/^cache;desc="hit", app;dur=[\d.]+$/);
+      expect(write.headers['server-timing']).toMatch(/txn;dur=[\d.]+, app;dur=[\d.]+$/);
+      const metrics = (await t.anon.get('/metrics')).text;
+      expect(metrics).toMatch(/route="\/api\/hackathons\/:id\/teams \(fast path\)"/);
+      expect(metrics).toMatch(/^event_loop_delay_p99_ms [\d.]+$/m);
+    } finally {
+      await t.close();
+    }
+  });
+});
+
 describe('the board fast path', () => {
   it('answers cached pages before the rate limiter, so reads are never throttled, while everything else still is', async () => {
     const t = await startApp({ RATE_LIMIT_MAX: '5' });
