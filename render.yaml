@@ -12,7 +12,8 @@ services:
       - { key: NODE_ENV, value: production }
       - { key: NODE_VERSION, value: "20" }
       - { key: LOG_LEVEL, value: info }
-      - { key: TRUST_PROXY, value: "1" }
+      # Cloudflare -> Render -> app: two proxies. With one, every user shares the rate-limit bucket of a Cloudflare edge address.
+      - { key: TRUST_PROXY, value: "2" }
       - { key: MONGODB_URI, sync: false }
       - { key: MONGODB_DB, value: lastseat }
       - { key: TXN_MAX_ATTEMPTS, value: "10" }
