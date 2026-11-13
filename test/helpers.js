@@ -32,8 +32,8 @@ export function testEnv(overrides = {}, database = `test_${randomBytes(6).toStri
  * Nothing is mocked: requests travel over real sockets and hit real transactions.
  * Limits default to "never trips" so only the rate-limit tests see a limiter.
  */
-export async function startApp(overrides = {}) {
-  const config = loadConfig(testEnv(overrides));
+export async function startApp(overrides = {}, database = undefined) {
+  const config = loadConfig(testEnv(overrides, database));
   const ctx = await connectDb(config, pino({ level: config.LOG_LEVEL }));
   const { app, bus } = await createApp(ctx);
   const server = await new Promise((resolve) => {
@@ -90,15 +90,16 @@ export async function startApp(overrides = {}) {
     return { doc, memberships, memberCount: doc?.memberCount, rows: memberships.length };
   }
 
-  async function close() {
+  /** keepData: leave the database in place, to start another app on it (a restart). */
+  async function close({ keepData = false } = {}) {
     bus.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
-    await ctx.db.dropDatabase();
+    if (!keepData) await ctx.db.dropDatabase();
     await ctx.client.close();
   }
 
-  return { ctx, bus, url, hid, user, users, team, invariants, close, anon: request(url) };
+  return { ctx, bus, url, hid, database: config.MONGODB_DB, user, users, team, invariants, close, anon: request(url) };
 }
 
 export const statuses = (responses) => responses.map((r) => r.status).sort();

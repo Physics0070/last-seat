@@ -28,7 +28,7 @@ services:
       - { key: MIN_TEAM_SIZE, value: "2" }
       - { key: MAX_TEAM_SIZE, value: "4" }
       - { key: INVITE_TTL_HOURS, value: "72" }
-      - { key: INVITE_CODE_BYTES, value: "10" }
+      - { key: INVITE_CODE_BYTES, value: "16" }
       - { key: RATE_LIMIT_WINDOW_MS, value: "60000" }
       - { key: RATE_LIMIT_MAX, value: "600" }
       # Per address per minute. A hackathon venue is one connection for hundreds of people, and signing up costs a password hash.
@@ -38,9 +38,11 @@ services:
       - { key: REDEEM_RATE_LIMIT_USER_MAX, value: "10" }
       - { key: IDEMPOTENCY_TTL_HOURS, value: "24" }
       - { key: IDEMPOTENCY_LOCK_SECONDS, value: "30" }
+      - { key: EVENT_RETENTION_HOURS, value: "24" }
       - { key: SSE_HEARTBEAT_MS, value: "25000" }
       - { key: SSE_RETRY_MS, value: "2000" }
       - { key: SSE_REPLAY_BUFFER, value: "1000" }
+      - { key: SSE_OUTBOX_REPLAY_MAX, value: "5000" }
       - { key: BOARD_PAGE_SIZE_DEFAULT, value: "20" }
       - { key: BOARD_PAGE_SIZE_MAX, value: "50" }
       - { key: BOARD_CACHE_TTL_MS, value: "1000" }

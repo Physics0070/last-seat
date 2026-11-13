@@ -251,7 +251,7 @@ function RedeemForm({ onJoined, onFull }: { onJoined: (team: Team) => void; onFu
     <form className="redeem" onSubmit={submit}>
       <label htmlFor="code">Have an invite code?</label>
       <div className="row">
-        <input id="code" name="code" required placeholder="A1B2-C3D4-E5F6-A7B8-C9D0" autoComplete="off" spellCheck={false} aria-describedby={error ? 'code-error' : undefined} />
+        <input id="code" name="code" required placeholder="A1B2-C3D4-…" autoComplete="off" spellCheck={false} aria-describedby={error ? 'code-error' : undefined} />
         <button className="btn" disabled={busy}>{busy ? 'Joining…' : 'Join instantly'}</button>
       </div>
       {error && <p id="code-error" role="alert" className="error">{error}</p>}

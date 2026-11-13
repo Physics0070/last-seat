@@ -28,8 +28,8 @@ const schema = z
     MAX_TEAM_SIZE: int(1),
 
     INVITE_TTL_HOURS: int(1),
-    // 7 bytes = 56 bits is the floor; the spec asks for at least 50 bits of entropy.
-    INVITE_CODE_BYTES: int(7, 32),
+    // 16 bytes = 128 bits is the floor: guessing is hopeless even before the rate limits.
+    INVITE_CODE_BYTES: int(16, 32),
 
     RATE_LIMIT_WINDOW_MS: int(1000),
     RATE_LIMIT_MAX: int(1),
@@ -40,10 +40,14 @@ const schema = z
 
     IDEMPOTENCY_TTL_HOURS: int(1),
     IDEMPOTENCY_LOCK_SECONDS: int(1),
+    // How long published events stay in the outbox for replay after a reconnect or a restart.
+    EVENT_RETENTION_HOURS: int(1),
 
     SSE_HEARTBEAT_MS: int(1000),
     SSE_RETRY_MS: int(100),
     SSE_REPLAY_BUFFER: int(1),
+    // Most events replayed from the outbox to one reconnecting client; further behind than that, it refetches instead.
+    SSE_OUTBOX_REPLAY_MAX: int(1),
 
     BOARD_PAGE_SIZE_DEFAULT: int(1),
     BOARD_PAGE_SIZE_MAX: int(1),

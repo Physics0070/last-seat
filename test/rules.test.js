@@ -67,6 +67,21 @@ describe('authentication', () => {
   });
 });
 
+describe('CSRF', () => {
+  it('refuses a write whose Origin is another site, and accepts this site', async () => {
+    const u = await t.user();
+    const host = new URL(t.url).host;
+    const forged = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Forged' }).set('Origin', 'https://evil.example');
+    const garbage = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Garbage' }).set('Origin', 'null');
+    const ours = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Ours' }).set('Origin', `http://${host}`);
+    expect(forged.status).toBe(403);
+    expect(forged.body.error.code).toBe('cross_origin');
+    expect(garbage.status).toBe(403);
+    expect(ours.status).toBe(201);
+    expect(await t.ctx.teams.countDocuments({ name: { $in: ['Forged', 'Garbage'] } })).toBe(0);
+  });
+});
+
 describe('validation and error format', () => {
   it('rejects unknown fields and reports each problem', async () => {
     const u = await t.user();
@@ -160,10 +175,10 @@ describe('team rules', () => {
 });
 
 describe('invite codes', () => {
-  it('have at least 50 bits of entropy and are stored only as a hash', async () => {
+  it('have at least 128 bits of entropy and are stored only as a hash', async () => {
     const team = await t.team(1);
     const hex = team.code.replaceAll('-', '');
-    expect(hex.length * 4).toBeGreaterThanOrEqual(50);
+    expect(hex.length * 4).toBeGreaterThanOrEqual(128);
     const { doc } = await t.invariants(team.id);
     expect(JSON.stringify(doc)).not.toContain(hex);
     expect(doc.inviteCodeHash).toMatch(/^[0-9a-f]{64}$/);
@@ -181,7 +196,7 @@ describe('invite codes', () => {
     await t.ctx.teams.updateOne({ _id: new ObjectId(team.id) }, { $set: { inviteExpiresAt: new Date(Date.now() - 1000) } });
     const u = await t.user();
     const expired = await u.post('/api/invites/redeem', { code: team.code });
-    const unknown = await u.post('/api/invites/redeem', { code: 'AAAA-BBBB-CCCC-DDDD-EEEE' });
+    const unknown = await u.post('/api/invites/redeem', { code: 'AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-0000-1111' });
     expect(expired.status).toBe(404);
     expect(unknown.status).toBe(404);
     expect(expired.body.error).toEqual(unknown.body.error);

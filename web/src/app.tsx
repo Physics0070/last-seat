@@ -86,7 +86,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const emit = (event: LiveEvent) => listeners.current.forEach((l) => l(event))
     source.onopen = () => setLive('live')
     source.onerror = () => setLive('reconnecting')
-    source.onmessage = (e) => emit(JSON.parse(e.data))
+    // The server may resend an event under a new number after a crash; its eventId stays the same, so drop repeats.
+    const seen = new Set<string>()
+    source.onmessage = (e) => {
+      const event = JSON.parse(e.data)
+      if (event.eventId) {
+        if (seen.has(event.eventId)) return
+        seen.add(event.eventId)
+        if (seen.size > 2000) seen.delete(seen.values().next().value as string)
+      }
+      emit(event)
+    }
     source.addEventListener('reset', () => emit({ type: 'reset' }))
     return () => source.close()
   }, [hackathonId])

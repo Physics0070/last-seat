@@ -152,7 +152,7 @@ describe('idempotency record', () => {
       const res = await u.post('/api/invites/redeem', { code: team.code }).set('Idempotency-Key', 'atomic-1');
       expect(res.status).toBe(200);
 
-      const record = await t.ctx.idempotencyKeys.findOne({ _id: `${u.id}:atomic-1` });
+      const record = await t.ctx.idempotencyKeys.findOne({ _id: `${u.id}|POST /api/invites/redeem|atomic-1` });
       expect(record).toMatchObject({ state: 'done', status: 200 });
       expect(record.body.team.id).toBe(team.id);
       expect(record.body.team.memberCount).toBe(2);

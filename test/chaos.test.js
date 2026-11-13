@@ -139,11 +139,12 @@ async function round(roundNumber) {
   const memberships = await db.collection('memberships').find({}).toArray();
   const teams = await db.collection('teams').find({}).toArray();
   const audit = await db.collection('auditLog').find({ action: 'member.joined_by_invite' }).toArray();
+  const joinedEvents = await db.collection('outbox').countDocuments({ type: 'member.joined' });
   const group = (rows, key) => rows.reduce((m, row) => m.set(key(row), [...(m.get(key(row)) ?? []), row]), new Map());
   const perUser = group(memberships, (m) => String(m.userId));
   const perTeam = group(memberships, (m) => String(m.teamId));
   await client.close();
-  return { retries, outcomes, memberships, teams, audit, perUser, perTeam, committedButUnanswered, neverCommitted, joiners, accounts };
+  return { retries, outcomes, memberships, teams, audit, joinedEvents, perUser, perTeam, committedButUnanswered, neverCommitted, joiners, accounts };
 }
 
 describe('chaos: kill -9 the server in the middle of a burst of joins', () => {
@@ -175,7 +176,9 @@ describe('chaos: kill -9 the server in the middle of a burst of joins', () => {
       }
       // 4. exactly one audit entry per join: nothing committed without its audit row, nothing logged twice
       expect(r.audit).toHaveLength(JOINERS);
-      // 5. a join that committed before the kill but was never answered is replayed as the ORIGINAL success
+      // 5. exactly one outbox event per join: the event committed with its change, never without it, never twice
+      expect(r.joinedEvents).toBe(JOINERS);
+      // 6. a join that committed before the kill but was never answered is replayed as the ORIGINAL success
       r.joiners.forEach((u, i) => {
         if (r.outcomes[i] !== null) expect(r.outcomes[i].code).toBe('ok');
       });

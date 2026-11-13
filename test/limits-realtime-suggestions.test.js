@@ -1,3 +1,4 @@
+import { ObjectId } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { scoreMatch, utcOffsetMinutes } from '../src/suggestions.js';
 import { startApp } from './helpers.js';
@@ -62,7 +63,7 @@ describe('invite brute-force protection', () => {
   });
 });
 
-describe('server-sent events', () => {
+describe('server-sent events (transactional outbox)', () => {
   let t;
   beforeAll(async () => {
     t = await startApp({ SSE_REPLAY_BUFFER: '5' });
@@ -70,9 +71,9 @@ describe('server-sent events', () => {
   afterAll(() => t.close());
 
   /** Opens the stream and collects parsed frames until `count` data events arrive. */
-  async function listen(count, lastEventId) {
+  async function listen(count, lastEventId, app = t) {
     const controller = new AbortController();
-    const res = await fetch(`${t.url}/api/hackathons/${t.hid}/events`, {
+    const res = await fetch(app.url + '/api/hackathons/' + app.hid + '/events', {
       signal: controller.signal,
       headers: lastEventId ? { 'Last-Event-ID': lastEventId } : {},
     });
@@ -86,7 +87,7 @@ describe('server-sent events', () => {
         while ((end = text.indexOf('\n\n')) !== -1) {
           const lines = text.slice(0, end).split('\n');
           text = text.slice(end + 2);
-          const field = (name) => lines.find((l) => l.startsWith(`${name}: `))?.slice(name.length + 2);
+          const field = (name) => lines.find((l) => l.startsWith(name + ': '))?.slice(name.length + 2);
           if (field('event') === 'reset') frames.push({ reset: true });
           else if (field('data')) frames.push({ id: field('id'), ...JSON.parse(field('data')) });
           if (frames.length >= count) {
@@ -102,32 +103,45 @@ describe('server-sent events', () => {
     });
     return { res, done };
   }
+  const settle = () => new Promise((r) => setTimeout(r, 200)); // sequence stamps are written just after sending
 
-  it('pushes join, leader change, removal and deletion to every listener', async () => {
+  it('pushes join, leader change, removal and deletion to every listener, with increasing ids', async () => {
     const stream = await listen(5);
     expect(stream.res.headers.get('content-type')).toBe('text/event-stream');
 
     const team = await t.team(2);
-    await team.leader.post(`/api/teams/${team.id}/leave`);
-    await team.others[0].post(`/api/teams/${team.id}/leave`);
+    await team.leader.post('/api/teams/' + team.id + '/leave');
+    await team.others[0].post('/api/teams/' + team.id + '/leave');
 
     const frames = await stream.done;
     expect(frames.map((f) => f.type)).toEqual(['team.created', 'member.joined', 'member.left', 'leader.changed', 'team.deleted']);
     expect(frames[1]).toMatchObject({ teamId: team.id, userId: team.others[0].id, team: { memberCount: 2, status: 'formed' } });
     expect(frames[3]).toMatchObject({ userId: team.others[0].id, team: { leaderId: team.others[0].id } });
-    expect(frames.every((f) => /^[0-9a-f]{8}-\d+$/.test(f.id))).toBe(true);
+    const ids = frames.map((f) => Number(f.id));
+    expect(ids.every((id, i) => Number.isInteger(id) && (i === 0 || id === ids[i - 1] + 1))).toBe(true);
+    expect(frames.every((f) => /^[0-9a-f]{24}$/.test(f.eventId))).toBe(true);
   });
 
-  it('announces request activity without revealing who asked', async () => {
+  it('writes every published event to the outbox in the same transaction, then stamps its number', async () => {
+    const team = await t.team(1);
+    const rows = await t.ctx.outbox.find({ 'data.teamId': new ObjectId(team.id) }).toArray();
+    expect(rows.map((r) => r.type)).toEqual(['team.created']);
+    await settle();
+    expect(Number.isInteger((await t.ctx.outbox.findOne({ _id: rows[0]._id })).seq)).toBe(true);
+  });
+
+  it('announces request activity and code changes without revealing who asked or the code', async () => {
     const team = await t.team(1);
     const applicant = await t.user();
-    const stream = await listen(3);
-    const { body } = await applicant.post(`/api/teams/${team.id}/requests`, {});
-    await team.leader.post(`/api/requests/${body.request.id}/accept`);
+    const stream = await listen(4);
+    const { body } = await applicant.post('/api/teams/' + team.id + '/requests', {});
+    await team.leader.post('/api/requests/' + body.request.id + '/accept');
+    const regenerated = await team.leader.post('/api/teams/' + team.id + '/invite');
 
     const frames = await stream.done;
-    expect(frames.map((f) => f.type)).toEqual(['request.created', 'member.joined', 'request.accepted']);
+    expect(frames.map((f) => f.type)).toEqual(['request.created', 'member.joined', 'request.accepted', 'invite.regenerated']);
     expect(frames[0]).not.toHaveProperty('userId');
+    expect(JSON.stringify(frames[3])).not.toContain(regenerated.body.invite.code.slice(0, 9));
   });
 
   it('replays missed events after a reconnect with Last-Event-ID', async () => {
@@ -135,28 +149,35 @@ describe('server-sent events', () => {
     const team = await t.team(1);
     const [seen] = await first.done;
 
-    // Two events happen while the client is disconnected.
     const u = await t.user();
     await u.post('/api/invites/redeem', { code: team.code });
-    await u.post(`/api/teams/${team.id}/leave`);
+    await u.post('/api/teams/' + team.id + '/leave');
 
     const replay = await (await listen(2, seen.id)).done;
     expect(replay.map((f) => f.type)).toEqual(['member.joined', 'member.left']);
-    expect(Number(replay[0].id.split('-')[1])).toBe(Number(seen.id.split('-')[1]) + 1);
+    expect(Number(replay[0].id)).toBe(Number(seen.id) + 1);
   });
 
-  it('sends "reset" when the gap is no longer in the buffer or the id is from another boot', async () => {
+  it('replays from the outbox when the client is further behind than the memory buffer', async () => {
     const first = await listen(1);
     const team = await t.team(1);
     const [seen] = await first.done;
-    // Buffer holds 5 events; push 6 more so the client's position falls out of it.
+    // Memory keeps 5 events; 6 happen while this client is away.
     for (let i = 0; i < 3; i++) {
       const u = await t.user();
       await u.post('/api/invites/redeem', { code: team.code });
-      await u.post(`/api/teams/${team.id}/leave`);
+      await u.post('/api/teams/' + team.id + '/leave');
     }
-    expect(await (await listen(1, seen.id)).done).toEqual([{ reset: true }]);
+    await settle();
+
+    const replay = await (await listen(6, seen.id)).done;
+    expect(replay.map((f) => f.type)).toEqual(['member.joined', 'member.left', 'member.joined', 'member.left', 'member.joined', 'member.left']);
+    expect(replay.map((f) => Number(f.id))).toEqual([1, 2, 3, 4, 5, 6].map((n) => Number(seen.id) + n));
+  });
+
+  it('sends "reset" for an id it cannot vouch for', async () => {
     expect(await (await listen(1, 'deadbeef-3')).done).toEqual([{ reset: true }]);
+    expect(await (await listen(1, String(t.bus.lastSeq() + 1000))).done).toEqual([{ reset: true }]);
   });
 
   it('does not publish events for a mutation that failed', async () => {
@@ -164,9 +185,55 @@ describe('server-sent events', () => {
     const u = await t.user();
     const stream = await listen(1);
     await u.post('/api/invites/redeem', { code: team.code });
-    await team.leader.del(`/api/teams/${team.id}/members/${team.others[0].id}`);
+    await team.leader.del('/api/teams/' + team.id + '/members/' + team.others[0].id);
     const [frame] = await stream.done;
     expect(frame.type).toBe('member.removed');
+  });
+
+  it('replays across a server restart, and numbering continues where it stopped', async () => {
+    const a = await startApp();
+    const first = await listen(1, undefined, a);
+    const team = await a.team(1);
+    const [seen] = await first.done;
+    const u = await a.user();
+    await u.post('/api/invites/redeem', { code: team.code });
+    await u.post('/api/teams/' + team.id + '/leave');
+    await settle();
+    const lastBefore = a.bus.lastSeq();
+    await a.close({ keepData: true });
+
+    const b = await startApp({}, a.database);
+    try {
+      const replay = await (await listen(2, seen.id, b)).done;
+      expect(replay.map((f) => f.type)).toEqual(['member.joined', 'member.left']);
+      const later = await listen(1, undefined, b);
+      await b.team(1);
+      const [fresh] = await later.done;
+      expect(Number(fresh.id)).toBeGreaterThan(lastBefore);
+    } finally {
+      await b.close();
+    }
+  });
+
+  it('publishes at boot an event that committed but was never published (the process died in between)', async () => {
+    const a = await startApp();
+    await a.team(1);
+    await settle();
+    const lastBefore = a.bus.lastSeq();
+    // Exactly what a crash between "commit" and "publish" leaves behind: an outbox row with no number.
+    const orphanTeam = new ObjectId();
+    await a.ctx.outbox.insertOne({ _id: new ObjectId(), hackathonId: a.ctx.hackathon._id, type: 'team.deleted', data: { type: 'team.deleted', teamId: orphanTeam }, at: new Date() });
+    await a.close({ keepData: true });
+
+    const b = await startApp({}, a.database);
+    try {
+      const replay = await (await listen(1, String(lastBefore), b)).done;
+      expect(replay).toHaveLength(1);
+      expect(replay[0]).toMatchObject({ type: 'team.deleted', teamId: String(orphanTeam), id: String(lastBefore + 1) });
+      expect(await b.ctx.outbox.countDocuments({ seq: { $exists: false } })).toBe(0);
+    } finally {
+      await b.close();
+    }
   });
 });
 

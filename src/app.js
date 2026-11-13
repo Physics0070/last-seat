@@ -55,7 +55,9 @@ const schemas = {
 
 export async function createApp(ctx) {
   const { config } = ctx;
-  const bus = createEventBus(config);
+  const bus = await createEventBus(ctx);
+  const relayed = await bus.relay();
+  if (relayed) ctx.log.warn({ relayed }, 'published events left unpublished by a previous process');
   const app = express();
   app.set('trust proxy', config.TRUST_PROXY);
   app.disable('x-powered-by');
@@ -137,6 +139,16 @@ export async function createApp(ctx) {
   const redeemUserLimit = failureLimiter({ windowMs: config.REDEEM_RATE_LIMIT_WINDOW_MS, max: config.REDEEM_RATE_LIMIT_USER_MAX, key: (req) => String(req.user.id), isFailure: wrongGuess });
 
   const api = express.Router();
+  // CSRF defence in depth on top of the SameSite=Lax cookie: a browser always sends Origin on a cross-site write, so any
+  // write whose Origin is not this host is refused. Requests without Origin (curl, server-to-server) carry no ambient
+  // browser credentials worth forging. No CORS headers are sent at all, so other sites cannot read API responses either.
+  api.use((req, _res, next) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+    const origin = req.get('origin');
+    if (!origin) return next();
+    const host = URL.canParse(origin) ? new URL(origin).host : null;
+    return next(host === req.get('host') ? undefined : new AppError(403, 'cross_origin', 'Cross-site requests are not allowed.'));
+  });
   api.use(limiter(config.RATE_LIMIT_WINDOW_MS, config.RATE_LIMIT_MAX));
   api.use(express.json({ limit: '16kb' }));
   api.use(cookieParser());
@@ -167,7 +179,8 @@ export async function createApp(ctx) {
     if (store) store.status = status;
     const { result, events } = await fn(req, actorOf(req));
     if (events.length) bump();
-    bus.publish(ctx.hackathon._id, events);
+    // Sending happens immediately; only the sequence stamp waits on the database, and the response does not wait for it.
+    bus.publish(events).catch((err) => req.log.error({ err }, 'failed to stamp published events'));
     res.status(status).json(result);
   };
 

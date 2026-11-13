@@ -80,7 +80,7 @@ describe('Idempotency-Key', () => {
 
     const res = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Second' }).set('Idempotency-Key', 'reuse-1');
 
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('idempotency_key_reused');
   });
 
@@ -102,7 +102,7 @@ describe('Idempotency-Key', () => {
     const first = await send();
     // Simulate a process that died mid-request: the record is stuck in "processing".
     await t.ctx.idempotencyKeys.updateOne(
-      { _id: `${u.id}:crash-1` },
+      { _id: `${u.id}|POST /api/hackathons/${t.hid}/teams|crash-1` },
       { $set: { state: 'processing', lockedUntil: new Date(Date.now() + 60_000) }, $unset: { status: '', body: '' } },
     );
 
@@ -110,7 +110,7 @@ describe('Idempotency-Key', () => {
     expect(blocked.status).toBe(409);
     expect(blocked.body.error.code).toBe('idempotency_in_progress');
 
-    await t.ctx.idempotencyKeys.updateOne({ _id: `${u.id}:crash-1` }, { $set: { lockedUntil: new Date(0) } });
+    await t.ctx.idempotencyKeys.updateOne({ _id: `${u.id}|POST /api/hackathons/${t.hid}/teams|crash-1` }, { $set: { lockedUntil: new Date(0) } });
     const retried = await send();
 
     // The handler ran again, and the unique membership index stopped a second team.
@@ -132,14 +132,24 @@ describe('Idempotency-Key', () => {
     expect(retry.status).toBe(201);
     expect(retry.headers['idempotency-replayed']).toBe('true');
     expect(retry.body).toEqual(first.body);
-    expect(different.status).toBe(422);
+    expect(different.status).toBe(409);
     expect(await t.ctx.users.countDocuments({ email: 'once@example.com' })).toBe(1);
 
     const cookie = retry.headers['set-cookie'][0].split(';')[0];
     expect((await t.anon.get('/api/me').set('Cookie', cookie)).body.user.id).toBe(first.body.user.id);
     // The stored fingerprint is keyed, so the password cannot be recovered from the record.
-    const record = await t.ctx.idempotencyKeys.findOne({ _id: 'anon:signup-1' });
+    const record = await t.ctx.idempotencyKeys.findOne({ _id: 'anon|POST /api/auth/signup|signup-1' });
     expect(JSON.stringify(record)).not.toContain('long enough pw');
+  });
+
+  it('scopes a key to its endpoint: the same key on another endpoint is a different request', async () => {
+    const team = await t.team(1);
+    const u = await t.user();
+    const created = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Endpoint scope' }).set('Idempotency-Key', 'shared-everywhere');
+    const left = await u.post(`/api/teams/${created.body.team.id}/leave`).set('Idempotency-Key', 'shared-everywhere');
+    const joined = await u.post('/api/invites/redeem', { code: team.code }).set('Idempotency-Key', 'shared-everywhere');
+    expect([created.status, left.status, joined.status]).toEqual([201, 200, 200]);
+    expect(joined.headers['idempotency-replayed']).toBeUndefined();
   });
 
   it('rejects a malformed key', async () => {

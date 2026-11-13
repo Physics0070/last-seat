@@ -175,7 +175,8 @@ export function regenerateInvite(ctx, actor, teamId) {
       before: null,
       after: { expiresAt: invite.expiresAt },
     });
-    return { result: { invite: { code: invite.code, expiresAt: invite.expiresAt } }, events: [] };
+    // The event says that the code changed, never what it is.
+    return { result: { invite: { code: invite.code, expiresAt: invite.expiresAt } }, events: [{ type: 'invite.regenerated', teamId }] };
   });
 }
 

@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { MongoClient } from 'mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 import { AppError } from './http.js';
 import { defaultMetrics } from './metrics.js';
 import { requestContext } from './request-context.js';
@@ -20,6 +20,7 @@ export async function connectDb(config, log) {
     joinRequests: db.collection('joinRequests'),
     auditLog: db.collection('auditLog'),
     idempotencyKeys: db.collection('idempotencyKeys'),
+    outbox: db.collection('outbox'),
     metrics: defaultMetrics(),
     // Bumped whenever people or teams change; caches built from that data compare against it.
     poolVersion: 0,
@@ -53,6 +54,10 @@ async function ensureIndexes(ctx) {
     ctx.joinRequests.createIndex({ hackathonId: 1, userId: 1, status: 1 }),
 
     ctx.auditLog.createIndex({ teamId: 1, _id: -1 }),
+    // Outbox: sequence numbers are unique once stamped; replay reads by hackathon in sequence order; old rows expire.
+    ctx.outbox.createIndex({ seq: 1 }, { unique: true, partialFilterExpression: { seq: { $type: 'number' } } }),
+    ctx.outbox.createIndex({ hackathonId: 1, seq: 1 }),
+    ctx.outbox.createIndex({ at: 1 }, { expireAfterSeconds: ctx.config.EVENT_RETENTION_HOURS * 3600 }),
     ctx.idempotencyKeys.createIndex({ createdAt: 1 }, { expireAfterSeconds: ctx.config.IDEMPOTENCY_TTL_HOURS * 3600 }),
   ]);
 }
@@ -86,6 +91,7 @@ export async function withTxn(ctx, fn) {
       session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
       const result = await fn(session);
       await storeIdempotentResponse(ctx, session, result);
+      await writeOutbox(ctx, session, result);
       await commit(session, max);
       return result;
     } catch (err) {
@@ -121,6 +127,18 @@ async function storeIdempotentResponse(ctx, session, outcome) {
   );
   // Lets the idempotency middleware skip writing the same record again after the response: one round trip saved.
   store.storedInTransaction = true;
+}
+
+/**
+ * The change's events go into the outbox in the same transaction: an event exists if and only if the change committed.
+ * The returned outcome's `events` are replaced by the stored documents so the caller publishes exactly those, after commit.
+ */
+async function writeOutbox(ctx, session, outcome) {
+  if (!outcome?.events?.length) return;
+  const at = new Date();
+  const docs = outcome.events.map((data) => ({ _id: new ObjectId(), hackathonId: ctx.hackathon._id, type: data.type, data, at }));
+  await ctx.outbox.insertMany(docs, { session });
+  outcome.events = docs;
 }
 
 // An unknown commit result must retry the commit itself, never the whole function:

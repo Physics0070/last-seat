@@ -1,3 +1,4 @@
+import { ObjectId } from 'mongodb';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startApp, statuses } from './helpers.js';
 
@@ -29,6 +30,23 @@ describe('seat claiming under contention', () => {
     expect(doc.memberCount).toBe(doc.maxSize);
     expect(doc.isOpen).toBe(false);
     expect(rows).toBe(doc.maxSize);
+  });
+
+  it('100 users race for the last seat: exactly one wins and the database agrees', async () => {
+    const team = await t.team(3);
+    const racers = await t.users(100);
+
+    const responses = await Promise.all(racers.map((u) => u.post('/api/invites/redeem', { code: team.code })));
+
+    expect(responses.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(responses.filter((r) => r.status === 409 && r.body.error.code === 'team_full')).toHaveLength(99);
+    const { doc, memberships } = await t.invariants(team.id);
+    expect(doc.memberCount).toBe(doc.maxSize);
+    expect(memberships).toHaveLength(doc.maxSize);
+    const winner = racers[responses.findIndex((r) => r.status === 200)];
+    expect(memberships.map((m) => String(m.userId))).toContain(winner.id);
+    // nobody else was left half-joined anywhere
+    expect(await t.ctx.memberships.countDocuments({ userId: { $in: racers.map((u) => new ObjectId(u.id)) } })).toBe(1);
   });
 
   it('a double-click joins once', async () => {

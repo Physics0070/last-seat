@@ -9,10 +9,11 @@ const KEY_FORMAT = /^[\x21-\x7e]{1,128}$/;
 /**
  * Idempotency-Key support for every mutating endpoint.
  *
- * The record's _id is `<userId>:<key>` (`anon:<key>` for signup and login, which have no user yet), so the unique _id index is the lock: of N concurrent
+ * The record's _id is `<userId>|<METHOD path>|<key>` (`anon|…` for signup and login, which have no user yet): one key
+ * means one thing per user per endpoint, so the unique _id index is the lock: of N concurrent
  * requests with the same key exactly one insert succeeds and runs the handler.
  *   - finished record, same request  -> replay the stored status and body (Idempotency-Replayed: true)
- *   - same key, different request    -> 422
+ *   - same key, different body       -> 409 idempotency_key_reused
  *   - still processing               -> 409 + Retry-After (the lock expires, so a crashed request cannot block the key forever)
  *
  * For team changes the successful response is written INSIDE the change's own transaction (see withTxn in db.js):
@@ -31,7 +32,7 @@ export function idempotency(ctx, { onReplay } = {}) {
       throw new AppError(400, 'invalid_idempotency_key', 'Idempotency-Key must be 1-128 printable ASCII characters.');
     }
 
-    const _id = `${req.user ? req.user.id : 'anon'}:${key}`;
+    const _id = `${req.user ? req.user.id : 'anon'}|${req.method} ${req.baseUrl}${req.path}|${key}`;
     // Keyed hash: login and signup bodies contain a password, so a plain hash stored in the database
     // would be something to brute-force. Without JWT_SECRET this fingerprint reveals nothing.
     const fingerprint = createHmac('sha256', ctx.config.JWT_SECRET)
@@ -46,7 +47,7 @@ export function idempotency(ctx, { onReplay } = {}) {
       if (!isDuplicateKey(err)) throw err;
       const existing = await records.findOne({ _id });
       if (existing && existing.fingerprint !== fingerprint) {
-        throw new AppError(422, 'idempotency_key_reused', 'This Idempotency-Key was already used for a different request.');
+        throw new AppError(409, 'idempotency_key_reused', 'This Idempotency-Key was already used for a different request.');
       }
       if (existing?.state === 'done') {
         ctx.metrics.inc('idempotent_replays_total');
