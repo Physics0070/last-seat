@@ -1,102 +1,31 @@
-# Design
+# Design: The Last Seat
 
-Race-proof team formation for a hackathon with 10,000 participants. Node 20+, Express 5, MongoDB (replica set), React.
-
-## Invariants, and what enforces each
-
-| Invariant | Enforced by | Proved by |
-| --- | --- | --- |
-| A team never exceeds its max size | One conditional update: `findOneAndUpdate({ _id, $expr: memberCount < maxSize }, memberCount + 1)` (`claimSeat` in `src/teams.js`) | `races.test.js`: 50 users, one seat, 5 rounds |
-| One team per person per hackathon | Unique index `memberships(hackathonId, userId)` | `rules.test.js` inserts a second membership directly and gets E11000 |
-| `memberCount` equals the number of membership rows | Seat claim, membership insert and audit entry commit in one transaction | every race test compares the two |
-| The leader is always a member | Leave/remove rewrites the team document in the same transaction as the membership delete | "leader leaves while two people join" |
-| One pending request per (team, user) | Partial unique index on `joinRequests` where `status = 'pending'` | `rules.test.js` |
-| A retried request never acts twice | Idempotency record with `_id = userId:key`, plus the indexes above | `idempotency.test.js` |
-
-**Negative control.** With the `$expr` guard deleted from `claimSeat`, the 50-user test fails with 40 winners. The test detects the bug it exists for.
+Node 20 + Express 5, MongoDB (replica set), React. One process serves the API, the live event stream and the UI.
+Long version: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Numbers: [LOAD_TEST.md](LOAD_TEST.md).
 
 ## Data model
-
-- `users`: email (unique), argon2id hash, displayName, skills[], timezone, utcOffsetMinutes.
-- `hackathons`: slug (unique), name, minTeamSize, maxTeamSize. One, created from env at startup.
-- `teams`: hackathonId, name, description, lookingFor[], leaderId, memberCount, minSize, maxSize, isOpen, inviteCodeHash (unique), inviteExpiresAt. Size limits are copied from the hackathon at creation. `isOpen` is recomputed inside the same update that changes `memberCount`.
-- `memberships`: hackathonId, teamId, userId, joinedAt.
-- `joinRequests`: hackathonId, teamId, userId, message, status (pending/accepted/declined/cancelled).
-- `auditLog`: append-only. actorId, action, teamId, targetId, before, after, requestId, at.
-- `idempotencyKeys`: `_id = userId:key`, fingerprint, state, status, body, TTL index.
-
-The invite code lives on the team document (one active code per team), so deleting the team deletes the code in the same write.
+`users` (email unique, argon2id hash, skills, timezone) · `hackathons` · `teams` (leader, `memberCount`, `minSize`/`maxSize` copied at creation, `isOpen`, **hashed** invite code + expiry) · `memberships` (**unique `(hackathonId, userId)`**) · `joinRequests` (partial unique on pending `(team, user)`) · `auditLog` (append-only, written in the same transaction, with request id) · `idempotencyKeys` (`_id = userId:key`). The board is served by one index, `(hackathonId, isOpen, _id)`, with a cursor: 21 keys examined per page, no sort, no skip.
 
 ## How races are prevented
+1. **The seat is one atomic update:** `findOneAndUpdate({ _id, $expr: memberCount < maxSize }, memberCount + 1)`. Two requests cannot both pass the check for the last seat.
+2. **It runs in a transaction** with the membership insert and the audit entry, so a person who is already on a team (the unique index says no) releases the seat they just took. Write conflicts retry with bounded, jittered backoff; the loser re-reads, sees a full team, and gets a clean `409`.
+3. **The database holds the invariants,** not the application: one team per person is a unique index.
+4. **Leader leaves** → the longest-standing member leads; **last member leaves** → the team, its code and its pending requests go in the same transaction.
 
-**Why a conditional update *and* a transaction.** They solve different problems. The conditional update makes "check there is room, then take it" a single atomic step, so two requests cannot both pass the check. The transaction makes "take the seat, insert the membership, write the audit entry" all-or-nothing: if the membership insert fails (the person is already on another team), the seat is released.
-
-**What happens when 50 requests collide.** MongoDB does not queue writers. The first transaction to write the team document proceeds; the others fail at once with a write conflict, labelled transient. `withTxn` (`src/db.js`) retries those with jittered backoff, up to `TXN_MAX_ATTEMPTS`. On retry they read the winner's committed state, the guard no longer matches, and they return `409 team_full`. If retries run out the answer is `503`, never a wrong write.
-
-**Leaving, removing, deleting.** Every one of these writes the team document, which is what serialises them against joins. Leader transfer picks the member with the oldest `joinedAt`. When the last member leaves, the team is deleted and its pending requests cancelled in the same transaction.
-
-**Accepting a request.** The claim filter includes `leaderId = actor`, so an accept racing a leadership change cannot succeed for the old leader.
-
-Events are published only after commit, so a retried transaction cannot emit twice.
+**Proof:** 50 people, one seat, 5 rounds over real HTTP: one `200`, 49 `409`. With the guard line deleted, 40 win, so the test bites. Also 250-way (one winner), double-click, two teams at once, two accepts for one seat, leader leaving mid-join. **Chaos:** the real server is `SIGKILL`ed mid-burst, restarted, every request retried; nothing corrupted, doubled or lost.
 
 ## Idempotency
-
-Every mutating endpoint accepts `Idempotency-Key`. The record's `_id` is `userId:key` (`anon:key` for signup and login), so the `_id` index is the lock.
-
-- First request inserts the record as `processing` and runs.
-- Same key and same request, finished: the stored status and body are replayed with `Idempotency-Replayed: true`. Client errors (4xx) are stored too; 5xx is not.
-- Same key, different method/path/body: `422`.
-- Same key while the first is still running: `409` with `Retry-After`.
-- The lock expires after `IDEMPOTENCY_LOCK_SECONDS`, so a crashed request does not block its key.
-
-**Trade-off.** The record is completed after the transaction commits, not inside it. If the process dies in that gap, the retry runs the handler again and the unique indexes answer `409` instead of acting twice. The key gives a stable response; the indexes give the safety. Writing the record inside the transaction would close the gap at the cost of threading it through every handler.
-
-Signup and login bodies contain a password, so the request fingerprint is an HMAC keyed with `JWT_SECRET`, not a plain hash. A replayed signup or login also re-issues the session cookie, which is not part of the stored body.
+Every mutating request takes `Idempotency-Key`. The first request inserts `userId:key` (the unique `_id` is the lock); duplicates replay the stored response, a different body gets `422`, a request still running gets `409` + `Retry-After`. The response is stored **inside the change's own transaction**, so a crash right after the commit still replays the original success on retry (the chaos test shows 16 such cases; without this, those retries fail).
 
 ## Real time
+Server-sent events with ids `<boot>-<seq>`, a replay ring buffer and `Last-Event-ID`; if the gap cannot be proven the server sends `reset` and clients refetch. 10,000 open connections held at ~34 KB each; one event reached all in under a second.
 
-Server-sent events on `GET /api/hackathons/:id/events`. Each event has id `<bootId>-<seq>`. The browser's `EventSource` reconnects by itself and sends `Last-Event-ID`; the server replays newer events from a ring buffer (`SSE_REPLAY_BUFFER`). If the id comes from an earlier process or has left the buffer, the server sends `reset` and the client refetches. Request events carry the team id but not who asked.
-
-**Limitation.** The bus, the replay buffer, the rate-limit counters and the board cache are in process memory. This is correct for exactly one instance. To scale out: publish events through Redis Streams (the stream id becomes the event id), use `rate-limit-redis`, and clear the board cache from the same stream.
-
-## Security
-
-- JWT in an `httpOnly`, `SameSite=Lax` cookie; argon2id password hashes; login compares against a dummy hash for unknown emails.
-- Leader-only actions are checked on the server, inside the transaction where it matters.
-- Invite codes: 80 bits from `crypto.randomBytes`, stored as SHA-256, expiring. Redemption is rate-limited per IP and per user. Unknown and expired codes return the same response.
-- Every body, query and param goes through a strict zod schema (unknown fields rejected). One error shape, no stack traces. All configuration is validated at startup with no in-code defaults.
-
-## Suggestions
-
-`GET /api/hackathons/:id/suggestions` ranks people without a team for the caller's team (`?kind=teams` ranks open teams for a person, used after losing a race).
-
-```
-skill    = min(1, points / SUGGEST_SKILL_TARGET)
-           points = skills the person has that nobody on the team has,
-                    counted twice if the team listed them in lookingFor
-timezone = mean over team members of max(0, WORKDAY - hoursApart) / WORKDAY
-           hoursApart = circular distance between UTC offsets (0 to 12)
-score    = (wSkill * skill + wTz * timezone) / (wSkill + wTz)
-```
-
-Defaults: weights 0.6 and 0.4, target 3 skills, 8-hour workday. Each result carries its breakdown.
-
-## Performance
-
-The board query is `{ hackathonId, isOpen: true }` sorted by `_id` descending with an `_id` cursor, served by the index `(hackathonId, isOpen, _id)`: 21 keys examined for a page of 20, no sort stage, no skip. Serialized pages are cached in memory, shared by concurrent readers, and cleared on every team change. `LOAD_TEST.md` has the numbers with the cache on and off, and how the first run failed.
-
-## Trade-offs taken
-
-- One hackathon from env rather than an admin API. The schema carries `hackathonId` everywhere, so adding more is additive.
-- Plain JavaScript on the server (no build step), TypeScript in the UI. zod validates at every boundary.
-- UTC offset is captured at signup, so it drifts an hour across daylight-saving changes.
-- Suggestions score every user in memory (a few ms at 10k users). Past roughly 100k, pre-filter by a skills index.
-- The 3D sky is a single `Points` draw call with a shader, not react-three-fiber: one dependency instead of three, and it does not touch React's render path.
+## Trade-offs
+- **Single instance.** The event bus, rate-limit counters and board cache live in process memory. Scale-out: Redis streams + `rate-limit-redis`.
+- **A cached board** (1 s TTL, cleared on every change) answered before any middleware: it is why p95 is 145 ms locally, and why board reads are not rate limited.
+- **A hard kill** leaves the dead server's transactions holding locks until MongoDB expires them (60 s): those teams answer `503` + `Retry-After`, never corrupt data; the UI retries with the same key.
+- **Suggestions score everyone without a team in memory** (shared pool, a few ms at 10k users); past ~100k, pre-filter by an index.
+- **Free tier:** the live instance has a fraction of a CPU, so its p95 under 100 concurrent users is far above the local number (see LOAD_TEST.md).
 
 ## With one more week
-
-1. Move the event bus, rate limits and cache invalidation to Redis so more than one instance is correct.
-2. Complete the idempotency record inside the transaction.
-3. Playwright tests for the UI, including two browsers racing for one seat.
-4. Notifications to the requester on accept/decline, and profile editing.
-5. Load test from a separate machine against the deployed stack.
+Redis for events, limits and cache invalidation so more than one instance is correct · in-transaction idempotency for signup/login · k6 from a separate machine against a paid instance · Playwright for the UI in CI · notifications to a requester on accept/decline · per-team backpressure so a hot team cannot starve the retry budget.

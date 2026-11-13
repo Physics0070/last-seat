@@ -70,6 +70,7 @@ export function errorHandler(err, req, res, _next) {
       error = new AppError(500, 'internal_error', 'Something went wrong on our side.');
     }
   }
+  req.app.locals.metrics?.inc('api_errors_total', { code: error.code });
   if (error.headers) res.set(error.headers);
   res.status(error.status).json({
     error: { code: error.code, message: error.message, ...(error.details && { details: error.details }) },

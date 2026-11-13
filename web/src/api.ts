@@ -60,6 +60,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     if (!mutating) throw err
     res = await fetch(`/api${path}`, init)
   }
+  // A busy server (503) did not store anything under this key, so asking again with the same key is safe.
+  for (let attempt = 0; attempt < 4 && res.status === 503 && mutating; attempt++) {
+    await new Promise((r) => setTimeout(r, Number(res.headers.get('Retry-After') ?? 1) * 1000))
+    res = await fetch(`/api${path}`, init)
+  }
   if (res.status === 409 && mutating) {
     const peek = await res.clone().json()
     // Our own first attempt is still running on the server: wait as told, then ask again with the same key.

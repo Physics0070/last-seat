@@ -190,6 +190,56 @@ try {
   await leader.waitForTimeout(900);
   await leader.screenshot({ path: `${shots}/team-desktop.png`, fullPage: true });
 
+  // ---------- keyboard only: log in, create a team, leave it, never touching the mouse ----------
+  const tab = async (page, test, label) => {
+    for (let n = 1; n <= 60; n++) {
+      await page.keyboard.press('Tab');
+      if (await page.evaluate(test)) return n;
+    }
+    throw new Error(`could not reach "${label}" with the Tab key`);
+  };
+  const keyboardUser = account('keyboard');
+  const setup = await browser.newContext();
+  assert.equal((await setup.request.post(`${base}/api/auth/signup`, { data: keyboardUser })).status(), 201);
+  await setup.close();
+
+  const kbContext = await browser.newContext(desktop);
+  const kb = await kbContext.newPage();
+  await kb.goto(`${base}/login`);
+  await kb.getByRole('heading', { name: 'Welcome back' }).waitFor();
+  results.keyboardStops = {};
+  results.keyboardStops.email = await tab(kb, () => document.activeElement?.name === 'email', 'email field');
+  await kb.keyboard.type(keyboardUser.email);
+  await kb.keyboard.press('Tab');
+  await kb.keyboard.type(keyboardUser.password);
+  await kb.keyboard.press('Enter');
+  await kb.waitForURL('**/board');
+
+  results.keyboardStops.createTeam = await tab(kb, () => document.activeElement?.textContent?.trim() === 'Create a team', 'Create a team button');
+  // focus must be visible: a solid outline of at least 2px on the focused control
+  const outline = await kb.evaluate(() => {
+    const s = getComputedStyle(document.activeElement);
+    return { style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
+  });
+  assert.equal(outline.style, 'solid');
+  assert.ok(outline.width >= 2, `focus outline is ${outline.width}px`);
+  await kb.keyboard.press('Enter');
+  // a native dialog: focus moves into it (the team name field) and Enter submits
+  assert.equal(await kb.evaluate(() => document.activeElement?.name), 'name');
+  await kb.keyboard.type(`Keyboard Crew ${run}`);
+  await kb.keyboard.press('Enter');
+  await kb.waitForURL('**/teams/*');
+  assert.match(await kb.locator('.code').textContent(), /^[0-9A-F]{4}(-[0-9A-F]{4})+$/);
+  // after a route change, focus is on the new page's content, not left on the old page
+  assert.equal(await kb.evaluate(() => document.activeElement?.id), 'main');
+
+  kb.once('dialog', (dialog) => dialog.accept());
+  results.keyboardStops.leave = await tab(kb, () => document.activeElement?.textContent?.trim() === 'Leave team', 'Leave team button');
+  await kb.keyboard.press('Enter');
+  await kb.waitForURL('**/board');
+  results.keyboardOnlyFlow = 'login, create team, copy code visible, leave team';
+  await kbContext.close();
+
   // ---------- phone widths ----------
   const pocket = await signedIn('phone', phone);
   const mobile = await pocket.newPage();

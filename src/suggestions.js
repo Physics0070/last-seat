@@ -64,10 +64,36 @@ const groupOf = (users, lookingFor = []) => ({
 const top = (scored, limit) => scored.sort((a, b) => b.score - a.score).slice(0, limit);
 const profile = { displayName: 1, skills: 1, timezone: 1, utcOffsetMinutes: 1 };
 
+/**
+ * Everyone's membership and the people still without a team, loaded once and shared. Rebuilding this for every
+ * request (10,000 users and about 5,000 memberships) capped the endpoint near 12 requests a second and ballooned
+ * memory; now it is rebuilt at most when something changed (poolVersion) or the TTL passes, and concurrent
+ * requests share one load. Never mutate what this returns.
+ */
+function getPool(ctx, hackathonId) {
+  const ttl = ctx.config.BOARD_CACHE_TTL_MS;
+  const cached = ctx.suggestionPool;
+  if (ttl > 0 && cached && cached.version === ctx.poolVersion && cached.expires > Date.now()) return cached.promise;
+  const version = ctx.poolVersion;
+  const promise = Promise.all([
+    ctx.memberships.find({ hackathonId }, { projection: { _id: 0, userId: 1, teamId: 1 } }).toArray(),
+    ctx.users.find({}, { projection: profile }).toArray(),
+  ]).then(([memberships, users]) => {
+    const taken = new Set(memberships.map((m) => String(m.userId)));
+    return { memberships, open: users.filter((u) => !taken.has(String(u._id))) };
+  });
+  if (ttl > 0) {
+    ctx.suggestionPool = { version, expires: Date.now() + ttl, promise };
+    promise.catch(() => {
+      if (ctx.suggestionPool?.promise === promise) ctx.suggestionPool = null;
+    });
+  }
+  return promise;
+}
+
 /** People without a team, ranked for the caller's team (or for the caller alone if they have none). */
 export async function suggestPeople(ctx, hackathonId, userId) {
-  const memberships = await ctx.memberships.find({ hackathonId }, { projection: { _id: 0, userId: 1, teamId: 1 } }).toArray();
-  const taken = new Set(memberships.map((m) => String(m.userId)));
+  const { memberships, open } = await getPool(ctx, hackathonId);
   const mine = memberships.find((m) => m.userId.equals(userId));
 
   let group;
@@ -84,11 +110,10 @@ export async function suggestPeople(ctx, hackathonId, userId) {
     group = groupOf([await ctx.users.findOne({ _id: userId }, { projection: profile })]);
   }
 
-  // ponytail: scores every user in memory (10k users is a few ms of CPU). Past ~100k users,
+  // ponytail: scores every person without a team in memory (a few ms of CPU at 10k users). Past ~100k users,
   // pre-filter with an index on skills ($in: skills the group lacks) or precompute per team.
-  const candidates = await ctx.users.find({}, { projection: profile }).toArray();
-  const scored = candidates
-    .filter((u) => !taken.has(String(u._id)) && !u._id.equals(userId))
+  const scored = open
+    .filter((u) => !u._id.equals(userId))
     .map((u) => ({ user: { id: String(u._id), displayName: u.displayName, skills: u.skills, timezone: u.timezone }, ...scoreMatch(u, group, ctx.config) }));
   return { for: teamId ? { teamId } : { userId: String(userId) }, suggestions: top(scored, ctx.config.SUGGEST_LIMIT) };
 }

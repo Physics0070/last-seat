@@ -8,3 +8,8 @@ council-report-*.html
 council-transcript-*.md
 council-report-*.html
 council-transcript-*.md
+video/node_modules/
+video/out/
+video/public/footage/
+video/public/*.wav
+video/public/*.mp3

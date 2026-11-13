@@ -14,10 +14,17 @@ import { isDuplicateKey } from './db.js';
 import { createEventBus } from './events.js';
 import { AppError, SESSION_COOKIE, cookieOptions, errorHandler, notFound, objectId, parse, readUser, requireAuth, signSession } from './http.js';
 import { idempotency } from './idempotency.js';
+import { requestContext } from './request-context.js';
 import { SKILLS, isTimezone, suggestPeople, suggestTeams, utcOffsetMinutes } from './suggestions.js';
 import * as teams from './teams.js';
 
 const webDist = fileURLToPath(new URL('../web/dist', import.meta.url));
+
+// argon2id at the OWASP minimum (19 MiB, 2 passes, 1 lane). The library default (64 MiB, 3 passes, 4 lanes) cost
+// about 80 ms of CPU per hash and capped one process near 12 signups a second; this is several times cheaper and
+// still memory-hard. Verification reads the parameters stored in each hash, so older hashes keep working.
+const PASSWORD_HASH = { type: argon2.argon2id, memoryCost: 19456, timeCost: 2, parallelism: 1 };
+const BOARD_URL = /^\/api\/hackathons\/[0-9a-f]{24}\/teams(\?.*)?$/i;
 
 const skill = z.enum(SKILLS);
 const skillList = z.array(skill).max(8).refine((s) => new Set(s).size === s.length, 'skills must be unique');
@@ -51,6 +58,36 @@ export async function createApp(ctx) {
   const app = express();
   app.set('trust proxy', config.TRUST_PROXY);
   app.disable('x-powered-by');
+  app.locals.metrics = ctx.metrics;
+  ctx.metrics.describeGauge('sse_clients', 'Open live-update connections.', () => bus.clientCount());
+  ctx.metrics.describeGauge('board_cache_entries', 'Serialized board pages currently cached.', () => boardCache.size);
+  ctx.metrics.describeGauge('process_resident_memory_bytes', 'Resident memory of this process.', () => process.memoryUsage.rss());
+  ctx.metrics.describeGauge('process_uptime_seconds', 'Seconds since this process started.', () => Math.round(process.uptime()));
+
+  // Serialized board pages by URL. Every committed team change clears the map, so a reader never sees a page
+  // older than the last event this instance published; the TTL bounds staleness from other instances' writes.
+  // ponytail: per-process cache. With several instances, clear it from the shared event stream as well.
+  const boardCache = new Map();
+  let boardVersion = 0;
+  /** Called after any committed change to teams or members: drops every cache built from that data. */
+  const bump = () => {
+    boardVersion++;
+    ctx.poolVersion++;
+    boardCache.clear();
+  };
+
+  // Fast path for the hottest request. A cached board page is answered before logging, helmet, the rate limiter and
+  // the body parsers run: together they cost more CPU than the response, and on a small instance CPU is the ceiling.
+  // It serves exactly the bytes the normal path cached, so staleness is identical. Reads cost nothing to protect
+  // here (no database work), which is why they are not rate limited; anything that misses falls through to the full stack.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || !BOARD_URL.test(req.url)) return next();
+    const hit = boardCache.get(req.originalUrl);
+    if (!hit?.ready || hit.expires <= Date.now()) return next();
+    ctx.metrics.inc('board_fast_path_hits_total');
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': hit.ready.length, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-cache' });
+    return res.end(hit.ready);
+  });
 
   app.use(
     pinoHttp({
@@ -63,6 +100,16 @@ export async function createApp(ctx) {
     }),
   );
   app.use(helmet());
+  app.use((req, res, next) => {
+    const started = process.hrtime.bigint();
+    res.on('finish', () => {
+      // Express clears baseUrl before 'finish', so the router's mount point is restored from the URL.
+      const route = req.route ? `${req.originalUrl.startsWith('/api/') ? '/api' : ''}${req.route.path}` : 'static_or_unmatched';
+      ctx.metrics.observe('http_request_duration_ms', { method: req.method, route, status: res.statusCode }, Number(process.hrtime.bigint() - started) / 1e6);
+    });
+    next();
+  });
+  app.get('/metrics', (_req, res) => res.type('text/plain; version=0.0.4').send(ctx.metrics.render()));
 
   const limiter = (windowMs, limit, keyGenerator) =>
     rateLimit({
@@ -102,19 +149,13 @@ export async function createApp(ctx) {
   });
   const page = (req) => parse(pageQuery, req.query);
 
-  // Serialized board pages by URL. Every committed team change clears the map, so a reader never sees a page
-  // older than the last event this instance published; the TTL bounds staleness from other instances' writes.
-  // ponytail: per-process cache. With several instances, clear it from the shared event stream as well.
-  const boardCache = new Map();
-  let boardVersion = 0;
-
   /** Runs a mutation, then publishes its events. Events go out only after the transaction has committed. */
   const mutate = (status, fn) => async (req, res) => {
+    // Tell the transaction helper what success looks like, so a keyed request's response commits with the change.
+    const store = requestContext.getStore();
+    if (store) store.status = status;
     const { result, events } = await fn(req, actorOf(req));
-    if (events.length) {
-      boardVersion++;
-      boardCache.clear();
-    }
+    if (events.length) bump();
     bus.publish(ctx.hackathon._id, events);
     res.status(status).json(result);
   };
@@ -129,7 +170,7 @@ export async function createApp(ctx) {
   api.get('/meta', (_req, res) => res.json({ skills: SKILLS, hackathon: publicHackathon(ctx.hackathon) }));
 
   // Verified against when the email is unknown, so login takes the same time either way.
-  const dummyHash = await argon2.hash(randomBytes(16).toString('hex'));
+  const dummyHash = await argon2.hash(randomBytes(16).toString('hex'), PASSWORD_HASH);
 
   // A replayed signup or login must also restore the session cookie, which is not part of the stored body.
   const authIdempotency = idempotency(ctx, {
@@ -140,7 +181,7 @@ export async function createApp(ctx) {
     const body = parse(schemas.signup, req.body);
     const user = {
       email: body.email,
-      passwordHash: await argon2.hash(body.password),
+      passwordHash: await argon2.hash(body.password, PASSWORD_HASH),
       displayName: body.displayName,
       skills: body.skills,
       timezone: body.timezone,
@@ -150,6 +191,7 @@ export async function createApp(ctx) {
     };
     try {
       const { insertedId } = await ctx.users.insertOne(user);
+      ctx.poolVersion++; // a new person changes who can be suggested
       startSession(res, insertedId);
       res.status(201).json({ user: selfUser({ ...user, _id: insertedId }) });
     } catch (err) {
@@ -186,13 +228,17 @@ export async function createApp(ctx) {
       const version = boardVersion;
       // The promise itself is cached, so 100 concurrent misses for a page share one query (no stampede on expiry).
       const body = teams.listBoard(ctx, hackathonId(req), page(req)).then(JSON.stringify);
-      entry = { body, expires: Date.now() + config.BOARD_CACHE_TTL_MS };
+      entry = { body, ready: null, expires: Date.now() + config.BOARD_CACHE_TTL_MS };
       if (config.BOARD_CACHE_TTL_MS > 0) {
         if (boardCache.size >= config.BOARD_CACHE_MAX_ENTRIES) boardCache.clear();
         boardCache.set(key, entry);
         // Drop the entry if the query failed, or if a team changed while it ran (the page may predate that change).
+        // Otherwise publish the finished bytes so the fast path can serve them.
         const drop = () => boardCache.get(key) === entry && boardCache.delete(key);
-        body.then(() => version !== boardVersion && drop(), drop);
+        body.then((json) => {
+          if (version !== boardVersion) drop();
+          else entry.ready = Buffer.from(json);
+        }, drop);
       }
     }
     res.type('json').send(await entry.body);

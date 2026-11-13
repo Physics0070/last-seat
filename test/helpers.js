@@ -9,26 +9,31 @@ import { connectDb } from '../src/db.js';
 
 const exampleEnv = parseEnv(readFileSync(new URL('../.env.example', import.meta.url), 'utf8'));
 
-/**
- * Boots the real app on an ephemeral port against a fresh database in the shared replica set.
- * Nothing is mocked: requests travel over real sockets and hit real transactions.
- * Limits default to "never trips" so only the rate-limit tests see a limiter.
- */
-export async function startApp(overrides = {}) {
-  const config = loadConfig({
+/** Environment for a server process (in-process or spawned): the example config, a private database, nothing rate limited. */
+export function testEnv(overrides = {}, database = `test_${randomBytes(6).toString('hex')}`) {
+  return {
     ...exampleEnv,
     NODE_ENV: 'test',
     LOG_LEVEL: 'silent',
     PORT: '0',
     MONGODB_URI: process.env.TEST_MONGODB_URI,
-    MONGODB_DB: `test_${randomBytes(6).toString('hex')}`,
+    MONGODB_DB: database,
     JWT_SECRET: randomBytes(32).toString('hex'),
     RATE_LIMIT_MAX: '100000',
     AUTH_RATE_LIMIT_MAX: '100000',
     REDEEM_RATE_LIMIT_IP_MAX: '100000',
     REDEEM_RATE_LIMIT_USER_MAX: '100000',
     ...overrides,
-  });
+  };
+}
+
+/**
+ * Boots the real app on an ephemeral port against a fresh database in the shared replica set.
+ * Nothing is mocked: requests travel over real sockets and hit real transactions.
+ * Limits default to "never trips" so only the rate-limit tests see a limiter.
+ */
+export async function startApp(overrides = {}) {
+  const config = loadConfig(testEnv(overrides));
   const ctx = await connectDb(config, pino({ level: config.LOG_LEVEL }));
   const { app, bus } = await createApp(ctx);
   const server = await new Promise((resolve) => {

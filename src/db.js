@@ -1,6 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { MongoClient } from 'mongodb';
 import { AppError } from './http.js';
+import { defaultMetrics } from './metrics.js';
+import { requestContext } from './request-context.js';
 
 export async function connectDb(config, log) {
   const client = new MongoClient(config.MONGODB_URI);
@@ -18,6 +20,9 @@ export async function connectDb(config, log) {
     joinRequests: db.collection('joinRequests'),
     auditLog: db.collection('auditLog'),
     idempotencyKeys: db.collection('idempotencyKeys'),
+    metrics: defaultMetrics(),
+    // Bumped whenever people or teams change; caches built from that data compare against it.
+    poolVersion: 0,
   };
   await ensureIndexes(ctx);
   ctx.hackathon = await ensureHackathon(ctx);
@@ -80,6 +85,7 @@ export async function withTxn(ctx, fn) {
     try {
       session.startTransaction({ readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
       const result = await fn(session);
+      await storeIdempotentResponse(ctx, session, result);
       await commit(session, max);
       return result;
     } catch (err) {
@@ -88,13 +94,31 @@ export async function withTxn(ctx, fn) {
       }
       if (!hasLabel(err, 'TransientTransactionError')) throw err;
       if (attempt >= max) {
-        throw new AppError(503, 'busy', 'The server is busy, please retry.', { cause: err });
+        ctx.metrics.inc('txn_failures_total');
+        throw new AppError(503, 'busy', 'The server is busy, please retry.', { cause: err, headers: { 'Retry-After': '1' } });
       }
+      ctx.metrics.inc('txn_retries_total');
       await sleep(Math.min(200, 5 * 2 ** attempt) * (0.5 + Math.random()));
     } finally {
       await session.endSession();
     }
   }
+}
+
+/**
+ * A request that carries an Idempotency-Key gets its response stored in THIS transaction, next to the change it
+ * describes: both commit or neither does. Without this, a crash between "commit" and "store the response" would
+ * leave a committed change with no stored answer, and the client's retry would see a confusing 409 for something
+ * that in fact succeeded. With it, the retry always replays the original success.
+ */
+async function storeIdempotentResponse(ctx, session, outcome) {
+  const store = requestContext.getStore();
+  if (!store?.idempotencyId || !store.status) return;
+  await ctx.idempotencyKeys.updateOne(
+    { _id: store.idempotencyId },
+    { $set: { state: 'done', status: store.status, body: JSON.parse(JSON.stringify(outcome.result)) } },
+    { session },
+  );
 }
 
 // An unknown commit result must retry the commit itself, never the whole function:

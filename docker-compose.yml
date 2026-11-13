@@ -1,5 +1,7 @@
-# One command for a local single-node MongoDB replica set (transactions need a replica set):
-#   docker compose up -d
+# The whole stack with one command:   docker compose up --build
+#   UI + API:  http://localhost:4000        MongoDB replica set: localhost:27017
+# Fill the board with 10,000 users and 2,000 teams (optional):
+#   docker compose run --rm -e SEED_PASSWORD=choose-a-password app node scripts/seed.js
 services:
   mongo:
     image: mongo:8
@@ -9,11 +11,32 @@ services:
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      # Initiates the replica set on first run, then reports healthy once a primary exists.
+      # Initiates the replica set on first run (transactions need one), then reports healthy once it answers.
       test: >
         mongosh --quiet --eval "try { rs.status().ok } catch (e) { rs.initiate({ _id: 'rs0', members: [{ _id: 0, host: 'localhost:27017' }] }).ok }"
       interval: 5s
       timeout: 10s
       retries: 12
+
+  app:
+    build: .
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    # Every setting comes from the same documented file the app reads elsewhere; only what differs here is overridden.
+    env_file: .env.example
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      MONGODB_URI: mongodb://mongo:27017/?replicaSet=rs0&directConnection=true
+    # No secret lives in the repository: unless you pass JWT_SECRET, a random one is generated each time the
+    # container starts (sessions then end when it restarts, which is fine for local use).
+    command:
+      - sh
+      - -c
+      - 'export JWT_SECRET="$${JWT_SECRET:-$$(head -c 48 /dev/urandom | base64 | tr -dc A-Za-z0-9)}"; exec node src/server.js'
+
 volumes:
   mongo-data:

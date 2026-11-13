@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import { isDuplicateKey } from './db.js';
 import { AppError } from './http.js';
+import { requestContext } from './request-context.js';
 
 const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const KEY_FORMAT = /^[\x21-\x7e]{1,128}$/;
@@ -14,9 +15,10 @@ const KEY_FORMAT = /^[\x21-\x7e]{1,128}$/;
  *   - same key, different request    -> 422
  *   - still processing               -> 409 + Retry-After (the lock expires, so a crashed request cannot block the key forever)
  *
- * The record is completed after the handler's transaction commits, not inside it. If the process
- * dies in between, the retry re-runs the handler; the domain's own unique indexes then answer 409
- * instead of joining twice or creating a second team. The key adds a stable response, the indexes give the safety.
+ * For team changes the successful response is written INSIDE the change's own transaction (see withTxn in db.js):
+ * the change and its stored answer commit together, so even a crash right after the commit leaves a retry
+ * that replays the original success. Failures and signup/login complete the record after the handler instead;
+ * the domain's unique indexes remain the safety net underneath either way.
  */
 export function idempotency(ctx, { onReplay } = {}) {
   const lockMs = ctx.config.IDEMPOTENCY_LOCK_SECONDS * 1000;
@@ -47,6 +49,7 @@ export function idempotency(ctx, { onReplay } = {}) {
         throw new AppError(422, 'idempotency_key_reused', 'This Idempotency-Key was already used for a different request.');
       }
       if (existing?.state === 'done') {
+        ctx.metrics.inc('idempotent_replays_total');
         onReplay?.(res, existing);
         return res.set('Idempotency-Replayed', 'true').status(existing.status).json(existing.body);
       }
@@ -75,6 +78,7 @@ export function idempotency(ctx, { onReplay } = {}) {
         .then(() => sendJson(body));
       return res;
     };
-    next();
+    // `status` is filled in by the route (mutate) once it knows what success looks like.
+    requestContext.run({ idempotencyId: _id, status: null }, () => next());
   };
 }

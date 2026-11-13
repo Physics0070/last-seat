@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+web/node_modules
+web/dist
+video
+docs
+test
+.env
+*.md
+council-*
