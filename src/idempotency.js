@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { isDuplicateKey } from './db.js';
 import { AppError } from './http.js';
 
@@ -6,9 +6,9 @@ const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const KEY_FORMAT = /^[\x21-\x7e]{1,128}$/;
 
 /**
- * Idempotency-Key support for authenticated mutations.
+ * Idempotency-Key support for every mutating endpoint.
  *
- * The record's _id is `<userId>:<key>`, so the unique _id index is the lock: of N concurrent
+ * The record's _id is `<userId>:<key>` (`anon:<key>` for signup and login, which have no user yet), so the unique _id index is the lock: of N concurrent
  * requests with the same key exactly one insert succeeds and runs the handler.
  *   - finished record, same request  -> replay the stored status and body (Idempotency-Replayed: true)
  *   - same key, different request    -> 422
@@ -18,7 +18,7 @@ const KEY_FORMAT = /^[\x21-\x7e]{1,128}$/;
  * dies in between, the retry re-runs the handler; the domain's own unique indexes then answer 409
  * instead of joining twice or creating a second team. The key adds a stable response, the indexes give the safety.
  */
-export function idempotency(ctx) {
+export function idempotency(ctx, { onReplay } = {}) {
   const lockMs = ctx.config.IDEMPOTENCY_LOCK_SECONDS * 1000;
   const records = ctx.idempotencyKeys;
 
@@ -29,8 +29,10 @@ export function idempotency(ctx) {
       throw new AppError(400, 'invalid_idempotency_key', 'Idempotency-Key must be 1-128 printable ASCII characters.');
     }
 
-    const _id = `${req.user.id}:${key}`;
-    const fingerprint = createHash('sha256')
+    const _id = `${req.user ? req.user.id : 'anon'}:${key}`;
+    // Keyed hash: login and signup bodies contain a password, so a plain hash stored in the database
+    // would be something to brute-force. Without JWT_SECRET this fingerprint reveals nothing.
+    const fingerprint = createHmac('sha256', ctx.config.JWT_SECRET)
       .update(`${req.method} ${req.originalUrl} ${JSON.stringify(req.body ?? null)}`)
       .digest('hex');
     const now = new Date();
@@ -45,6 +47,7 @@ export function idempotency(ctx) {
         throw new AppError(422, 'idempotency_key_reused', 'This Idempotency-Key was already used for a different request.');
       }
       if (existing?.state === 'done') {
+        onReplay?.(res, existing);
         return res.set('Idempotency-Replayed', 'true').status(existing.status).json(existing.body);
       }
       // Still marked processing: take over only if the first attempt's lock has expired (it crashed).

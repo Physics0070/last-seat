@@ -41,7 +41,7 @@ Events are published only after commit, so a retried transaction cannot emit twi
 
 ## Idempotency
 
-Every authenticated mutation accepts `Idempotency-Key`. The record's `_id` is `userId:key`, so the `_id` index is the lock.
+Every mutating endpoint accepts `Idempotency-Key`. The record's `_id` is `userId:key` (`anon:key` for signup and login), so the `_id` index is the lock.
 
 - First request inserts the record as `processing` and runs.
 - Same key and same request, finished: the stored status and body are replayed with `Idempotency-Replayed: true`. Client errors (4xx) are stored too; 5xx is not.
@@ -51,7 +51,7 @@ Every authenticated mutation accepts `Idempotency-Key`. The record's `_id` is `u
 
 **Trade-off.** The record is completed after the transaction commits, not inside it. If the process dies in that gap, the retry runs the handler again and the unique indexes answer `409` instead of acting twice. The key gives a stable response; the indexes give the safety. Writing the record inside the transaction would close the gap at the cost of threading it through every handler.
 
-Signup and login do not take a key: signup is already idempotent through the unique email index, and login creates no resource.
+Signup and login bodies contain a password, so the request fingerprint is an HMAC keyed with `JWT_SECRET`, not a plain hash. A replayed signup or login also re-issues the session cookie, which is not part of the stored body.
 
 ## Real time
 

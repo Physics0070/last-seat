@@ -1,11 +1,18 @@
 import { useMemo, useState, type FormEvent } from 'react'
+import { m } from 'motion/react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, errorMessage, type User } from './api'
 import { useApp } from './app'
 
+const EASE = [0.2, 0.8, 0.2, 1] as const
+const rise = { hidden: { opacity: 0, y: 28 }, shown: { opacity: 1, y: 0, transition: { duration: 0.7, ease: EASE } } }
+const sequence = { hidden: {}, shown: { transition: { staggerChildren: 0.12 } } }
+
 export function Landing() {
-  const { user, meta } = useApp()
+  const { user, meta, reducedMotion } = useApp()
   const { minTeamSize, maxTeamSize, name } = meta.hackathon
+  // With reduced motion nothing starts hidden: the whole story is on the page from the first paint.
+  const inView = reducedMotion ? {} : ({ initial: 'hidden', whileInView: 'shown', viewport: { once: true, amount: 0.5 }, variants: sequence } as const)
   return (
     <div className="landing">
       <section className="hero">
@@ -20,21 +27,21 @@ export function Landing() {
         </div>
       </section>
 
-      <section className="beat">
-        <h2>Alone, you are a point of light.</h2>
-        <p>Say what you are good at and where in the world you are. That is all the board needs to start matching you.</p>
-      </section>
-      <section className="beat">
-        <h2>Together, you are a constellation.</h2>
-        <p>Paste an invite code and you are in instantly. Or ask a team from the board and let its leader say yes. Everyone watching sees it happen as it happens.</p>
-      </section>
-      <section className="beat">
-        <h2>The last seat belongs to exactly one person.</h2>
-        <p>When fifty people reach for it in the same instant, one gets it and forty-nine are told so, immediately and honestly, with the next best teams to try.</p>
-        <div className="actions">
+      <m.section className="beat" {...inView}>
+        <m.h2 variants={rise}>Alone, you are a point of light.</m.h2>
+        <m.p variants={rise}>Say what you are good at and where in the world you are. That is all the board needs to start matching you.</m.p>
+      </m.section>
+      <m.section className="beat" {...inView}>
+        <m.h2 variants={rise}>Together, you are a constellation.</m.h2>
+        <m.p variants={rise}>Paste an invite code and you are in instantly. Or ask a team from the board and let its leader say yes. Everyone watching sees it happen as it happens.</m.p>
+      </m.section>
+      <m.section className="beat" {...inView}>
+        <m.h2 variants={rise}>The last seat belongs to exactly one person.</m.h2>
+        <m.p variants={rise}>When fifty people reach for it in the same instant, one gets it and forty-nine are told so, immediately and honestly, with the next best teams to try.</m.p>
+        <m.div className="actions" variants={rise}>
           <Link className="btn primary large" to={user ? '/board' : '/signup'}>{user ? 'Find a team' : 'Take your seat'}</Link>
-        </div>
-      </section>
+        </m.div>
+      </m.section>
     </div>
   )
 }

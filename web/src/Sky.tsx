@@ -14,8 +14,8 @@ const supportsWebGL = () => {
  * shows is also in the DOM (the board list, the status bar announcements).
  *
  * A static CSS star field is always rendered first, so the page paints and is usable immediately.
- * The WebGL layer (three.js, its own chunk) is loaded afterwards and only if motion is allowed and
- * WebGL exists; otherwise the CSS version simply stays.
+ * The WebGL layer (three.js, its own chunk) is loaded on first interaction and only if motion is allowed
+ * and WebGL exists; otherwise the CSS version simply stays.
  */
 export function Sky() {
   const { reducedMotion, onLive } = useApp()
@@ -26,9 +26,12 @@ export function Sky() {
     if (reducedMotion || !canvas.current || !supportsWebGL()) return
     let disposed = false
     let cleanup = () => {}
-    // Wait until the browser is idle so the 3D chunk never competes with first paint or with forms becoming interactive.
-    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 200))
-    idle(async () => {
+    // The 3D chunk is fetched on the visitor's first interaction (move, scroll, touch, key), never during
+    // page load. Until then, and on a device nobody is touching, the CSS sky costs nothing.
+    const wake = ['pointermove', 'pointerdown', 'touchstart', 'keydown', 'scroll'] as const
+    const stopWaiting = () => wake.forEach((type) => window.removeEventListener(type, start))
+    async function start() {
+      stopWaiting()
       const { startSky } = await import('./skyGL')
       if (disposed || !canvas.current) return
       const sky = startSky(canvas.current)
@@ -41,9 +44,11 @@ export function Sky() {
         stopLive()
         sky.dispose()
       }
-    })
+    }
+    wake.forEach((type) => window.addEventListener(type, start, { once: true, passive: true }))
     return () => {
       disposed = true
+      stopWaiting()
       cleanup()
       setActive(false)
     }

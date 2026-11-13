@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { LazyMotion, MotionConfig } from 'motion/react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api, type LiveEvent, type Meta, type MyState, type User } from './api'
 import { Sky } from './Sky'
@@ -24,6 +25,7 @@ export function useApp() {
   return ctx
 }
 
+const loadMotion = () => import('./motionFeatures').then((m) => m.default)
 const NO_STATE: MyState = { teamId: null, pendingRequests: [] }
 const MOTION_KEY = 'motion'
 
@@ -110,7 +112,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const value: AppState = { meta: boot.meta, user: boot.user, setUser, my, refreshMy, onLive, announce, reducedMotion }
   return (
     <AppContext.Provider value={value}>
-      {children}
+      <LazyMotion features={loadMotion} strict>
+        <MotionConfig reducedMotion={reducedMotion ? 'always' : 'never'}>{children}</MotionConfig>
+      </LazyMotion>
       <div className="statusbar">
         <span className={`live-dot ${live}`} aria-hidden="true" />
         <span className="muted">{live === 'live' ? 'Live' : live === 'connecting' ? 'Connecting…' : 'Reconnecting…'}</span>
@@ -138,10 +142,13 @@ export function Layout() {
   const main = useRef<HTMLElement>(null)
 
   // Focus management: after a route change, move focus to the new page so keyboard and screen-reader users land on it.
-  const first = useRef(true)
+  // Compared against the previous path (not "is this the first run"), so the initial load leaves focus at the top of
+  // the document, where the skip link is, even when React runs effects twice in development.
+  const previousPath = useRef(location.pathname)
   useEffect(() => {
-    if (first.current) first.current = false
-    else main.current?.focus()
+    if (previousPath.current === location.pathname) return
+    previousPath.current = location.pathname
+    main.current?.focus({ preventScroll: true })
     window.scrollTo(0, 0)
   }, [location.pathname])
 

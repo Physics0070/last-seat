@@ -12,7 +12,7 @@
 
 **Motion.** Three durations (120, 260, 700 ms) and one easing curve, all CSS tokens. Motion confirms a change (a seat filling, a member appearing, a page arriving) and never blocks input. One switch, "Reduce motion", turns all of it off and is initialised from the system setting.
 
-**The sky.** 10,000 points in one draw call. Scrolling the landing page gathers them from drift into constellations. A join makes them flash warm; a deleted team makes them recede. The three.js chunk loads when the browser is idle, caps device pixel ratio at 1.5, stops when the tab is hidden, and lowers its own quality if frames slow down. Without WebGL, or with reduced motion, a static CSS star field stays in its place.
+**The sky.** 10,000 points in one draw call. Scrolling the landing page gathers them from drift into constellations. A join makes them flash warm; a deleted team makes them recede. The three.js chunk loads on the visitor's first interaction, caps device pixel ratio at 1.5, stops when the tab is hidden, and lowers its own quality if frames slow down. Without WebGL, or with reduced motion, a static CSS star field stays in its place.
 
 **Signature moments.**
 - *Last seat:* gold border, a "Last seat" badge, the empty seat dot beckons.

@@ -1,7 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import argon2 from 'argon2';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
@@ -129,7 +131,12 @@ export async function createApp(ctx) {
   // Verified against when the email is unknown, so login takes the same time either way.
   const dummyHash = await argon2.hash(randomBytes(16).toString('hex'));
 
-  api.post('/auth/signup', authLimit, async (req, res) => {
+  // A replayed signup or login must also restore the session cookie, which is not part of the stored body.
+  const authIdempotency = idempotency(ctx, {
+    onReplay: (res, record) => record.status < 300 && record.body.user && startSession(res, record.body.user.id),
+  });
+
+  api.post('/auth/signup', authLimit, authIdempotency, async (req, res) => {
     const body = parse(schemas.signup, req.body);
     const user = {
       email: body.email,
@@ -151,7 +158,7 @@ export async function createApp(ctx) {
     }
   });
 
-  api.post('/auth/login', authLimit, async (req, res) => {
+  api.post('/auth/login', authLimit, authIdempotency, async (req, res) => {
     const body = parse(schemas.login, req.body);
     const user = await ctx.users.findOne({ email: body.email });
     const ok = await argon2.verify(user?.passwordHash ?? dummyHash, body.password);
@@ -281,8 +288,21 @@ export async function createApp(ctx) {
 
   // The built frontend, when present, is served by the same process: one origin, so cookies and SSE just work.
   if (existsSync(webDist)) {
-    app.use(express.static(webDist, { index: false, maxAge: '1h' }));
-    app.use((req, res, next) => (req.method === 'GET' ? res.sendFile('index.html', { root: webDist }) : next()));
+    // Mounted after the API on purpose: only the UI's files are compressed, so the event stream is never
+    // buffered by gzip and the board endpoint pays no compression cost per request.
+    app.use(compression());
+    // Files under /assets have a content hash in their name, so they can be cached forever.
+    // index.html must always be revalidated, or a browser would keep pointing at old asset names.
+    app.use(
+      express.static(webDist, {
+        index: false,
+        setHeaders: (res, file) =>
+          res.setHeader('Cache-Control', file.includes(`${sep}assets${sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache'),
+      }),
+    );
+    app.use((req, res, next) =>
+      req.method === 'GET' ? res.sendFile('index.html', { root: webDist, headers: { 'Cache-Control': 'no-cache' } }) : next(),
+    );
   }
   app.use(notFound);
   app.use(errorHandler);

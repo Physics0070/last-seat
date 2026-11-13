@@ -120,6 +120,28 @@ describe('Idempotency-Key', () => {
     expect(await t.ctx.teams.countDocuments({ name: 'Recovered' })).toBe(1);
   });
 
+  it('a retried signup creates one account and the replay still signs the user in', async () => {
+    const body = { email: 'once@example.com', password: 'long enough pw', displayName: 'Once', skills: ['ml'], timezone: 'UTC' };
+    const send = (b = body) => t.anon.post('/api/auth/signup').set('Idempotency-Key', 'signup-1').send(b);
+
+    const first = await send();
+    const retry = await send();
+    const different = await send({ ...body, displayName: 'Someone else' });
+
+    expect(first.status).toBe(201);
+    expect(retry.status).toBe(201);
+    expect(retry.headers['idempotency-replayed']).toBe('true');
+    expect(retry.body).toEqual(first.body);
+    expect(different.status).toBe(422);
+    expect(await t.ctx.users.countDocuments({ email: 'once@example.com' })).toBe(1);
+
+    const cookie = retry.headers['set-cookie'][0].split(';')[0];
+    expect((await t.anon.get('/api/me').set('Cookie', cookie)).body.user.id).toBe(first.body.user.id);
+    // The stored fingerprint is keyed, so the password cannot be recovered from the record.
+    const record = await t.ctx.idempotencyKeys.findOne({ _id: 'anon:signup-1' });
+    expect(JSON.stringify(record)).not.toContain('long enough pw');
+  });
+
   it('rejects a malformed key', async () => {
     const u = await t.user();
     const res = await u.post(`/api/hackathons/${t.hid}/teams`, { name: 'Bad key' }).set('Idempotency-Key', 'x'.repeat(200));

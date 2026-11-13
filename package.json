@@ -15,10 +15,12 @@
     "lint": "eslint . && npm --prefix web run lint",
     "typecheck": "npm --prefix web run typecheck",
     "seed": "node scripts/seed.js",
-    "loadtest": "node scripts/loadtest.js"
+    "loadtest": "node scripts/loadtest.js",
+    "test:e2e": "node scripts/e2e.js"
   },
   "dependencies": {
     "argon2": "^0.45.2",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "express": "^5.3.0",
     "express-rate-limit": "^8.7.4",
@@ -35,6 +37,7 @@
     "eslint": "^10.14.0",
     "globals": "^17.14.0",
     "mongodb-memory-server": "^11.3.0",
+    "playwright-core": "^1.65.0",
     "supertest": "^7.3.2",
     "vitest": "^4.1.12"
   }

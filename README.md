@@ -27,7 +27,8 @@ Log in as `seed-00001@seed.invalid` with your `SEED_PASSWORD`, or sign up.
 | --- | --- |
 | `npm start` / `npm run dev` | API (and the built UI, if `web/dist` exists) on `PORT` |
 | `npm run dev:web` | Vite dev server for the UI, proxying `/api` to `PORT` |
-| `npm test` | 68 API tests over real HTTP against a real MongoDB replica set (started automatically) |
+| `npm test` | 69 API tests over real HTTP against a real MongoDB replica set (started automatically) |
+| `npm run test:e2e -- http://localhost:4000` | Drives the real UI in your installed Chrome against a running app: signup, create team, live update, two browsers racing for the last seat, keyboard and reduced-motion checks. Saves the screenshots below |
 | `npm run lint` / `npm run typecheck` | ESLint for the server, oxlint and `tsc` for the UI |
 | `npm run seed` | Inserts `SEED_USERS` users and `SEED_TEAMS` teams; safe to re-run |
 | `npm run loadtest` | autocannon against the board endpoint; writes `LOAD_TEST.md` |
@@ -39,7 +40,7 @@ Nothing is mocked. Each test file boots the app on a real port against its own d
 | File | Tests | Covers |
 | --- | --- | --- |
 | `test/races.test.js` | 15 | 50 users for one seat (5 rounds), double-click, one user joining two teams, two accepts for the last seat, the same request accepted twice, leader leaving during joins, last member leaving during a join |
-| `test/idempotency.test.js` | 8 | replay, 20 concurrent duplicates, replayed errors, key reuse, per-user scope, crashed-request recovery |
+| `test/idempotency.test.js` | 9 | replay, 20 concurrent duplicates, replayed errors, key reuse, per-user scope, crashed-request recovery, signup replay |
 | `test/rules.test.js` | 30 | auth, validation, min/max, invite expiry and regeneration, leader-only actions, requests, leadership transfer, team deletion, audit log, board pagination and query plan |
 | `test/limits-realtime-suggestions.test.js` | 15 | rate limits triggering, SSE delivery, replay and reset, suggestion scoring |
 
@@ -95,11 +96,66 @@ Nothing is deployed yet: it needs accounts only you can create.
 
 Free instances sleep when idle; the first request after a pause takes about a minute.
 
+## Screenshots
+
+Captured by `npm run test:e2e` from the running app (seeded data plus the accounts the test creates).
+
+| Landing | Landing after scrolling: points gathered into constellations |
+| --- | --- |
+| ![Landing](docs/screenshots/landing-desktop.png) | ![Gathered](docs/screenshots/landing-gathered-desktop.png) |
+
+| Board, with "Last seat" teams | Team page: constellation, inbox, invite code |
+| --- | --- |
+| ![Board](docs/screenshots/board-desktop.png) | ![Team](docs/screenshots/team-desktop.png) |
+
+| Losing the race (phone) | Board (phone) | Landing (phone) | Reduced motion |
+| --- | --- | --- | --- |
+| ![Lost](docs/screenshots/lost-the-race.png) | ![Board mobile](docs/screenshots/board-mobile.png) | ![Landing mobile](docs/screenshots/landing-mobile.png) | ![Reduced](docs/screenshots/landing-reduced-motion.png) |
+
+## Measured
+
+Lighthouse 13, mobile emulation (slow 4G, 4x CPU slowdown), against the production build served locally by `npm start`.
+These are local numbers; a deployed free-tier instance will differ.
+
+| Page | Performance | Accessibility | Best practices | LCP | TBT | CLS |
+| --- | --- | --- | --- | --- | --- | --- |
+| Landing | 93 | 100 | 100 | 2.6 s | 210 ms | 0 |
+| Board | 89 | 100 | 100 | 2.7 s | 320 ms | 0.045 |
+
+- Initial JavaScript: 107 KB gzipped. three.js (131 KB) and the animation engine (19 KB) are separate chunks.
+- The 3D sky is requested on the visitor's first interaction (move, scroll, touch, key), never during page load,
+  so Lighthouse measures the page before WebGL starts. Until then a CSS star field is shown.
+- Frame rate with the sky running: 144 fps on the development laptop (headless Chrome, 144 Hz display).
+  It has not been measured on a phone.
+
+The first Lighthouse run scored 65 and 58 for performance. What changed: gzip and immutable caching for the built
+files, the hero text no longer waits for a script to become visible, three.js no longer loads during page load,
+card layout measurement was removed, and looping animations now touch only transform and opacity.
+
+## Design review
+
+Scored against [DESIGN_BRIEF.md](DESIGN_BRIEF.md) after the last pass. Self-assessed, not an external jury.
+
+| Criterion | Score | Notes |
+| --- | --- | --- |
+| Concept carried through | 8/10 | Sky, constellation, "last seat" and the lost-race panel all tell the same story |
+| Typography and hierarchy | 8/10 | Two variable fonts, fluid scale, one accent colour used sparingly |
+| Motion with purpose | 7/10 | Scroll gathers the sky; story beats rise in view; cards enter and leave. No pinned scroll scenes |
+| Accessibility | 9/10 | Lighthouse 100; keyboard path and reduced motion are asserted by the browser test |
+| Performance | 8/10 | Meets the 85 target locally; unmeasured on real phones |
+
+Problems the review loop found and fixed: focus jumped past the skip link on first load; story sections stayed
+invisible under reduced motion; the largest text waited on a lazy script; local builds shipped React's development build.
+
+Weakest points that remain: board cards snap, not glide, when a neighbour leaves; the team history shows short user
+ids, not names; the landing page has no imagery beyond the sky.
+
 ## Not done, stated plainly
 
-- Not deployed, so there are no Lighthouse scores for a deployed site and no production load test.
-- The UI has no automated tests; it was checked by hand in a browser at desktop and phone widths.
-- No scroll-choreography library and no react-three-fiber: the sky is one three.js draw call driven by scroll position.
+- Not deployed yet, so every number above is local. `render.yaml` and the steps above are ready.
+- The sky is plain three.js driven by scroll position, not react-three-fiber, and scroll choreography uses Motion's
+  in-view triggers, not GSAP ScrollTrigger timelines.
+- The browser test needs Chrome installed and a running app, so it is not part of CI.
 - Signed-out board viewers can watch but must sign up to act.
 
 ## Five-minute walkthrough checklist
