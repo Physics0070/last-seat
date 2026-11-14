@@ -190,6 +190,49 @@ try {
   await leader.waitForTimeout(900);
   await leader.screenshot({ path: `${shots}/team-desktop.png`, fullPage: true });
 
+  // ---------- optimistic "Request to join" rolls back when the team fills first ----------
+  // The requester's board never hears that the team filled (the live stream is blocked), so the card still offers
+  // "Request to join". The click shows "Requested" at once; the server then says team_full and the UI must undo it.
+  {
+    const owner = await signedIn('rollback-owner', desktop);
+    const { hackathon } = await (await owner.request.get(`${base}/api/meta`)).json();
+    const rollbackName = `E2E Rollback ${run}`;
+    const created = await owner.request.post(`${base}/api/hackathons/${hackathon.id}/teams`, { data: { name: rollbackName } });
+    assert.equal(created.status(), 201, 'create rollback team');
+    const { invite } = await created.json();
+
+    const requesterContext = await signedIn('rollback-requester', desktop);
+    const requester = await requesterContext.newPage();
+    await requester.route('**/events', (route) => route.abort());
+    await requester.goto(`${base}/board`);
+    const card = requester.locator('li.team', { hasText: rollbackName });
+    const button = card.getByRole('button', { name: `Request to join ${rollbackName}` });
+    await button.waitFor();
+
+    for (let i = 1; i <= hackathon.maxTeamSize - 1; i++) {
+      const filler = await signedIn(`rollback-fill-${i}`, desktop);
+      assert.equal((await filler.request.post(`${base}/api/invites/redeem`, { data: { code: invite.code } })).status(), 200, `filler ${i}`);
+      await filler.close();
+    }
+
+    // Hold the request briefly so the optimistic state can be observed before the server's answer arrives.
+    let release;
+    const held = new Promise((resolve) => (release = resolve));
+    await requester.route('**/requests', async (route) => (await held, route.continue()));
+    await button.click();
+    await card.getByRole('button', { name: `Requested ${rollbackName}` }).waitFor({ timeout: 1000 });
+    assert.equal(await card.getByRole('button').isDisabled(), true, 'disabled while requested');
+    release();
+
+    await requester.locator('#lost-title').waitFor({ timeout: 10_000 });
+    await button.waitFor({ timeout: 5000 }); // back to "Request to join"
+    assert.match(await card.getByRole('alert').textContent(), /full/i, 'card explains the team is full');
+    assert.equal(await requester.getByRole('button', { name: `Requested ${rollbackName}` }).count(), 0);
+    await requester.screenshot({ path: `${shots}/optimistic-rollback.png` });
+    results.optimisticRollback = 'Requested shown at once, rolled back on team_full, next-best panel shown';
+    await Promise.all([owner.close(), requesterContext.close()]);
+  }
+
   // ---------- keyboard only: log in, create a team, leave it, never touching the mouse ----------
   const tab = async (page, test, label) => {
     for (let n = 1; n <= 60; n++) {

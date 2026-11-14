@@ -230,7 +230,7 @@ export function Layout() {
         </nav>
       </header>
       <main id="main" ref={main} tabIndex={-1} key={location.pathname} className="page">
-        <Suspense fallback={<p className="muted" aria-busy="true">Loading…</p>}>
+        <Suspense fallback={<p className="muted route-loading" aria-busy="true">Loading…</p>}>
           <Outlet />
         </Suspense>
       </main>
