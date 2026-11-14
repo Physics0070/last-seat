@@ -1,7 +1,7 @@
 # Design: The Last Seat
 
 Node 20 + Express 5, MongoDB (replica set), React. One process serves the API, the live event stream and the UI.
-Long version: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Numbers: [LOAD_TEST.md](LOAD_TEST.md).
+Long version: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Numbers: [PERFORMANCE_AUDIT.md](PERFORMANCE_AUDIT.md), [LOAD_TEST.md](LOAD_TEST.md), [LOAD_TEST_REMOTE.md](LOAD_TEST_REMOTE.md).
 
 ## Data model
 `users` (email unique, argon2id hash, skills, timezone) · `hackathons` · `teams` (leader, `memberCount`, `minSize`/`maxSize` copied at creation, `isOpen`, **hashed** invite code + expiry) · `memberships` (**unique `(hackathonId, userId)`**) · `joinRequests` (partial unique on pending `(team, user)`) · `auditLog` (append-only, written in the same transaction, with request id) · `idempotencyKeys` (`_id = userId:key`). The board is served by one index, `(hackathonId, isOpen, _id)`, with a cursor: 21 keys examined per page, no sort, no skip.
@@ -22,11 +22,11 @@ Server-sent events with ids `<boot>-<seq>`, a replay ring buffer and `Last-Event
 
 ## Trade-offs
 - **Single instance.** The event bus, rate-limit counters and board cache live in process memory. Scale-out: Redis streams + `rate-limit-redis`.
-- **A cached board** (1 s TTL, cleared on every change) answered before any middleware: it is why p95 is 145 ms locally, and why board reads are not rate limited.
+- **A cached board** (1 s TTL, cleared on every change) answered before any middleware: it is why a board read takes under 0.01 ms inside the server on a hit (p95 21 ms at 7,200 req/s locally), and why board reads are not rate limited.
 - **Brute-force limits count wrong guesses,** not requests: 80-bit codes are not guessable, and a crowd pressing join on one valid code from one venue connection must get clean `409`s, not throttling.
 - **A hard kill** leaves the dead server's transactions holding locks until MongoDB expires them (60 s): those teams answer `503` + `Retry-After`, never corrupt data; the UI retries with the same key.
 - **Suggestions score everyone without a team in memory** (shared pool, a few ms at 10k users); past ~100k, pre-filter by an index.
-- **Region mattered more than code.** With the server in Oregon and the database in India (~240 ms apart) a join took 2.1 s and a 50-way race 7-10 s; next to the database it is 0.5 s and 1-4 s, same code. Live p95 on the board is still ~420 ms at 100 users (free tier, ~190 ms network floor), so the 200 ms target is met locally only.
+- **Region mattered more than code.** With the server in Oregon and the database in India (~240 ms apart) a join took 2.1 s and a 50-way race 7-10 s; next to the database it is 0.5 s and 1-4 s, same code. Live, 100 users at about one request a second each now see p95 145 ms from a laptop in India (about 85 ms of it network); flat out, the free instance queues requests (p95 590 ms) while server time stays under 100 ms. See [PERFORMANCE_AUDIT.md](PERFORMANCE_AUDIT.md).
 
 ## With one more week
 Redis for events, limits and cache invalidation so more than one instance is correct · in-transaction idempotency for signup/login · k6 from a separate machine against a paid instance · Playwright for the UI in CI · notifications to a requester on accept/decline · per-team backpressure so a hot team cannot starve the retry budget.

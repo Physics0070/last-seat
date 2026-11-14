@@ -1,0 +1,152 @@
+{
+  "label": "remote",
+  "base": "https://last-seat-sg.onrender.com",
+  "at": "2026-11-14T06:18:54.959Z",
+  "durationSeconds": 20,
+  "p95TargetMs": 200,
+  "paths": [
+    "first page",
+    "page 20 cursors deep",
+    "?skill=design"
+  ],
+  "results": [
+    {
+      "users": 10,
+      "mode": "paced",
+      "requests": 197,
+      "rps": 9.44,
+      "failed": 0,
+      "codes": {
+        "200": 197
+      },
+      "client": {
+        "p50": 88.41,
+        "p95": 511.39,
+        "p99": 932.64,
+        "max": 1355.12
+      },
+      "server": {
+        "p50": 0,
+        "p95": 66.3,
+        "p99": 75.92,
+        "max": 78.81,
+        "samples": 197
+      }
+    },
+    {
+      "users": 10,
+      "mode": "flat out",
+      "requests": 1484,
+      "rps": 74.08,
+      "failed": 0,
+      "codes": {
+        "200": 1484
+      },
+      "client": {
+        "p50": 87.63,
+        "p95": 362.01,
+        "p99": 854.4,
+        "max": 1101.19
+      },
+      "server": {
+        "p50": 0,
+        "p95": 62.61,
+        "p99": 65.23,
+        "max": 83.38,
+        "samples": 1484
+      }
+    },
+    {
+      "users": 50,
+      "mode": "paced",
+      "requests": 993,
+      "rps": 47.39,
+      "failed": 0,
+      "codes": {
+        "200": 993
+      },
+      "client": {
+        "p50": 81.48,
+        "p95": 142.94,
+        "p99": 176.42,
+        "max": 347.75
+      },
+      "server": {
+        "p50": 0,
+        "p95": 52.29,
+        "p99": 66.45,
+        "max": 71.04,
+        "samples": 993
+      }
+    },
+    {
+      "users": 50,
+      "mode": "flat out",
+      "requests": 6993,
+      "rps": 346.59,
+      "failed": 0,
+      "codes": {
+        "200": 6993
+      },
+      "client": {
+        "p50": 106.99,
+        "p95": 369.27,
+        "p99": 488.57,
+        "max": 626.99
+      },
+      "server": {
+        "p50": 0,
+        "p95": 90.96,
+        "p99": 97.12,
+        "max": 103.01,
+        "samples": 6993
+      }
+    },
+    {
+      "users": 100,
+      "mode": "paced",
+      "requests": 1985,
+      "rps": 94.47,
+      "failed": 0,
+      "codes": {
+        "200": 1985
+      },
+      "client": {
+        "p50": 83.85,
+        "p95": 145.05,
+        "p99": 210.98,
+        "max": 360.88
+      },
+      "server": {
+        "p50": 0,
+        "p95": 46.61,
+        "p99": 66.66,
+        "max": 168.7,
+        "samples": 1985
+      }
+    },
+    {
+      "users": 100,
+      "mode": "flat out",
+      "requests": 7648,
+      "rps": 378.56,
+      "failed": 0,
+      "codes": {
+        "200": 7648
+      },
+      "client": {
+        "p50": 233.22,
+        "p95": 590.04,
+        "p99": 686.09,
+        "max": 9461.68
+      },
+      "server": {
+        "p50": 0,
+        "p95": 96.59,
+        "p99": 102.19,
+        "max": 110.84,
+        "samples": 7648
+      }
+    }
+  ]
+}

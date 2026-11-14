@@ -16,6 +16,7 @@
     "typecheck": "npm --prefix web run typecheck",
     "seed": "node scripts/seed.js",
     "loadtest": "node scripts/loadtest.js",
+    "loadtest:steps": "node scripts/loadsteps.js",
     "test:e2e": "node scripts/e2e.js",
     "capacity": "node scripts/capacity.js",
     "race": "node scripts/race.js"

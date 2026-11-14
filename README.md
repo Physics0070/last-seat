@@ -4,7 +4,8 @@ Team formation for a hackathon with 10,000 participants, built so that a seat ca
 When 50 people hit "join" on a team with one free seat in the same instant, exactly one gets it and 49 get a clean `409`.
 
 - **One-page design doc:** [DESIGN.md](DESIGN.md) (the long version: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md))
-- **Load test numbers:** [LOAD_TEST.md](LOAD_TEST.md)
+- **Performance:** [PERFORMANCE_AUDIT.md](PERFORMANCE_AUDIT.md) (profiling, changes, Lighthouse before and after)
+- **Load test numbers:** [LOAD_TEST.md](LOAD_TEST.md) (local), [LOAD_TEST_REMOTE.md](LOAD_TEST_REMOTE.md) (live, 10/50/100 users), [LOAD_TEST_REGIONAL.md](LOAD_TEST_REGIONAL.md) (live, server-side time)
 - **Visual direction:** [DESIGN_BRIEF.md](DESIGN_BRIEF.md)
 - **Live:** https://last-seat-sg.onrender.com (Render free tier in Singapore, MongoDB Atlas M0; the first request after a quiet period can take about a minute while the instance wakes)
 
@@ -19,10 +20,10 @@ When 50 people hit "join" on a team with one free seat in the same instant, exac
 | Secure: auth, leader-only, brute-force limits, validation | [`src/http.js`](src/http.js), [`src/app.js`](src/app.js), tests in `rules` and `limits-realtime-suggestions` |
 | Audit log | written in the same transaction, `GET /api/teams/:id/audit` (leader only) |
 | Suggestions with the scoring explained | [`src/suggestions.js`](src/suggestions.js), formula in [DESIGN.md](DESIGN.md), unit-tested |
-| 20+ tests in CI; seed; load test | `npm test` (79), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
+| 20+ tests in CI; seed; load test | `npm test` (87), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
 | React UI, phone and keyboard only | [`web/`](web/); the browser test drives a keyboard-only flow |
 | Live URL | https://last-seat-sg.onrender.com |
-| Bonus: optimistic UI + rollback, Compose, metrics, chaos test | request-to-join and accept/decline are optimistic and roll back on a conflict in the UI (no automated test covers the rollback); [`docker-compose.yml`](docker-compose.yml); `GET /metrics`; [`test/chaos.test.js`](test/chaos.test.js) |
+| Bonus: optimistic UI + rollback, Compose, metrics, chaos test | request-to-join and accept/decline are optimistic and roll back on a conflict; the browser test asserts the rollback (`scripts/e2e.js`, and it fails if the rollback is removed); [`docker-compose.yml`](docker-compose.yml); `GET /metrics`; [`test/chaos.test.js`](test/chaos.test.js) |
 
 ## Run it
 
@@ -54,11 +55,13 @@ Log in as `seed-00001@seed.invalid` with your `SEED_PASSWORD`, or sign up.
 | --- | --- |
 | `npm start` / `npm run dev` | API (and the built UI, if `web/dist` exists) on `PORT` |
 | `npm run dev:web` | Vite dev server for the UI, proxying `/api` to `PORT` |
-| `npm test` | 79 tests over real HTTP against a real MongoDB replica set (started automatically), including the chaos test that kills the server |
-| `npm run test:e2e -- http://localhost:4000` | Drives the real UI in your installed Chrome against a running app: signup, create team, live update, two browsers racing for the last seat, keyboard and reduced-motion checks. Saves the screenshots below |
+| `npm test` | 87 tests over real HTTP against a real MongoDB replica set (started automatically), including the chaos test that kills the server |
+| `npm run test:e2e -- http://localhost:4000` | Drives the real UI in your installed Chrome against a running app: signup, create team, live update, two browsers racing for the last seat, the optimistic "Request to join" rolling back when the team fills first, keyboard and reduced-motion checks. Saves the screenshots below |
 | `npm run lint` / `npm run typecheck` | ESLint for the server, oxlint and `tsc` for the UI |
 | `npm run seed` | Inserts `SEED_USERS` users and `SEED_TEAMS` teams; safe to re-run |
 | `npm run loadtest` | autocannon against the board endpoint; writes `LOAD_TEST.md` |
+| `npm run loadtest:steps -- <url> <label>` | 10/50/100 users, paced and flat out, client latency and server time from `Server-Timing`; writes `docs/loadtest/<label>.json` |
+| `bash scripts/lighthouse.sh <url> <label>` | Lighthouse on landing and board, desktop and mobile, median of 5 runs; reports in `docs/lighthouse/` |
 | `npm run race -- <url> 50` | The headline scenario against any running instance: N people press join on a team with one free seat |
 | `npm run capacity` | probes where one process bends: signup bursts, 50/100/250-way races, 10,000 open live connections, suggestions throughput |
 
@@ -173,6 +176,7 @@ Everything below was measured from one laptop in India against the live URL, wit
 | --- | --- | --- | --- | --- | --- |
 | 50 | 1 | 49 | 0 | 4 of 4 members, 4 rows | 1.1 to 4.4 s |
 | 100 | 1 | 99 | 0 | 4 of 4 members, 4 rows | 1.3 to 5.8 s |
+| 100 (re-run 2026-11-14) | 1 | 93 | 6 client connect timeouts (the laptop opening 100 TLS connections at once; no request reached the server) | 4 of 4 members, 4 rows | 1.0 to 10.9 s |
 
 One uncontended join takes about 0.5 s, creating a team 0.6 s, a signup 0.6 s.
 
@@ -180,15 +184,27 @@ One uncontended join takes about 0.5 s, creating a team 0.6 s, a signup 0.6 s.
 update without reload, two browsers pressing "Join instantly" together (one joined, one saw the "seat was taken" panel),
 a keyboard-only login, create-team and leave flow, reduced motion, all four palettes.
 
-**Load test, live: it does not meet p95 < 200 ms from here.** [LOAD_TEST_LIVE.md](LOAD_TEST_LIVE.md): with 100 users each
-asking about once a second, p50 is 107 ms and p95 is 418 ms; flat out, 351 req/s at p95 997 ms; every response was a
-`200`. A request that does no application work at all (`/api/meta`) takes about 186 ms to its first byte from this laptop,
-so the target is not reachable over this network path on this tier. The same code locally: 28,000 req/s at p95 4.6 ms,
-and 1,500 req/s at p95 81 ms with the cache off ([LOAD_TEST.md](LOAD_TEST.md)).
+**Load test, live** ([LOAD_TEST_REMOTE.md](LOAD_TEST_REMOTE.md), 2026-11-14, 0 failed requests out of 19,300):
 
-**Lighthouse** (mobile emulation, two runs each): landing 94 and 99 for performance, board 78 and 80; accessibility, best
-practices and SEO are 100 on both. The board's score was 91 on an earlier deployment; I have not found out why it is
-lower here.
+| Users | Paced (about 1 request/s each): client p95 | Flat out: client p95, req/s | Server time p95 (`Server-Timing`) |
+| ---: | ---: | ---: | ---: |
+| 10 | 511 ms (TLS setup, see below) | 362 ms, 74 | 63–66 ms |
+| 50 | **143 ms** | 369 ms, 347 | 52–91 ms |
+| 100 | **145 ms** | 590 ms, 379 | 47–97 ms |
+
+- At a realistic pace, 50 and 100 users meet p95 < 200 ms from a laptop in India. About 85 ms of every request is the
+  network round trip: the client p50 is that at every load, while the server's p50 is a cache hit.
+- The 10-user figure is connection setup. A new HTTPS connection costs 0.45–0.59 s of TLS here, and 10 first
+  connections out of 197 requests is exactly the 5% that p95 looks at.
+- Flat out, the free instance's CPU share is the limit: the server-side p95 stays under 100 ms, while requests queue
+  in front of it.
+- The server-side view, which is what a client in the region would add only its own round trip to, is in
+  [LOAD_TEST_REGIONAL.md](LOAD_TEST_REGIONAL.md). The same code locally: about 7,200 req/s at 100 connections, p95 21 ms.
+
+**Lighthouse, live** (median of 5 runs each; all runs and reports in [PERFORMANCE_AUDIT.md](PERFORMANCE_AUDIT.md)):
+landing **100** on desktop and **91** on mobile; board **96** on desktop and **86** on mobile. Accessibility, best
+practices and SEO are 100 on every page. The board on mobile is the one score under 90: what is left is React's own
+first render, about 280 ms under 4× CPU throttling.
 
 **What moving regions did.** The first deployment ran in Oregon while the database is in India, about 240 ms apart, and a
 join makes about eight database calls. There, one join took 2.1 s and the 50-way race 7.4 to 10.7 s. Moving the server
@@ -200,14 +216,15 @@ instead of wrong guesses, which throttled 22 of 50 racers coming from one machin
 
 ### Local production build
 
-Lighthouse 13, same emulation, against the production build served locally by `npm start`.
+Lighthouse 13.6.0, median of 5 runs, against the production build served by `npm start`.
 
-| Page | Performance | Accessibility | Best practices | LCP | TBT | CLS |
-| --- | --- | --- | --- | --- | --- | --- |
-| Landing | 91 | 100 | 100 | 2.7 s | 260 ms | 0 |
-| Board | 86 | 100 | 100 | 2.7 s | 390 ms | 0.045 |
+| Page | Desktop | Mobile | Accessibility | Best practices | Mobile LCP | Mobile TBT | CLS (desktop / mobile) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Landing | 100 | 97 | 100 | 100 | 2.5 s | 120 ms | 0 / 0.012 |
+| Board | 93 | 86 | 100 | 100 | 2.6 s | 430 ms | 0 / 0 |
 
-- Initial JavaScript: 115 KB gzipped. three.js (131 KB) and the animation engine (19 KB) are separate chunks.
+- Initial JavaScript on every page: 270.6 KB (86 KB gzipped), which is React, React Router and the app. The landing page
+  and its animation library (104 KB), the team page, and three.js (531 KB) are separate chunks.
 - The 3D sky is requested on the visitor's first interaction (move, scroll, touch, key), never during page load,
   so Lighthouse measures the page before WebGL starts. Until then a CSS star field is shown.
 - Frame rate with the sky running: 144 fps on the development laptop (headless Chrome, 144 Hz display).
@@ -227,7 +244,7 @@ Scored against [DESIGN_BRIEF.md](DESIGN_BRIEF.md) after the last pass. Self-asse
 | Typography and hierarchy | 8/10 | Two variable fonts, fluid scale, one accent colour used sparingly |
 | Motion with purpose | 8/10 | Scroll drives the sky, the story sections and a pinned seat scene; cards enter and leave |
 | Accessibility | 9/10 | Lighthouse 100; keyboard path and reduced motion are asserted by the browser test |
-| Performance | 8/10 | Meets the 85 target locally; unmeasured on real phones |
+| Performance | 8/10 | Live medians 100/91 (landing) and 96/86 (board); unmeasured on real phones |
 
 Problems the review loop found and fixed: focus jumped past the skip link on first load; story sections stayed
 invisible under reduced motion; the largest text waited on a lazy script; local builds shipped React's development build.
@@ -237,9 +254,8 @@ ids, not names; the landing page has no imagery beyond the sky.
 
 ## Not done, stated plainly
 
-- The deployed numbers above were measured from one laptop in India; they say nothing about other networks. The live load test misses the p95 target (see above).
+- The deployed numbers above were measured from one laptop in India; they say nothing about other networks. Flat out, and with 10 paced users, the live load test misses the p95 target from here (see above). There is no client in Singapore; the regional report is server-side timing.
 - `docker compose up` was not run end to end (Docker Desktop's engine would not start here); the compose file validates and the image contents were checked.
-- Optimistic UI with rollback exists in the UI but no automated test covers the rollback.
 - The sky is plain three.js driven by scroll position, not react-three-fiber, and scroll choreography uses Motion's
   in-view triggers, not GSAP ScrollTrigger timelines.
 - The browser test needs Chrome installed and a running app, so it is not part of CI.

@@ -13,3 +13,4 @@ video/out/
 video/public/footage/
 video/public/*.wav
 video/public/*.mp3
+docs/lighthouse/.runs/
