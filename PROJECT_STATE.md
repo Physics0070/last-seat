@@ -43,14 +43,13 @@ reading code. The gaps table from the start of the pass is kept at the bottom, w
   - React, phone layouts, four palettes, and a lazy 3D sky;
   - a keyboard-only flow, and an optimistic "Request to join" that rolls back, both asserted by the browser test
     (which fails when the rollback is removed).
-- **Tests:** 87 in `npm test`, plus `scripts/e2e.js` against a running app.
-- **Deployed:** https://last-seat-sg.onrender.com (Render free, Singapore) with Atlas M0 (India).
+- **Tests:** 88 in `npm test`, plus `scripts/e2e.js` against a running app.
+- **Deployed:** https://last-seat-sg.onrender.com (Render free, Singapore) with Atlas M0 (India), seeded on boot (`SEED_ON_BOOT=if-empty`): 10,000 users and 2,000 teams, confirmed in the service log on 2026-11-14.
 
 ## Still open
 | Item | Status |
 | --- | --- |
 | `docker compose up` end to end | not run: Docker Desktop's engine will not start on this machine. The compose file validates. |
-| Atlas seed data | the live board shows only test teams; `npm run seed` must be re-run with `MONGODB_URI` set in the owner's own shell |
 | Old Oregon service (`last-seat-erqy`) | still running; it should be suspended or deleted in the Render dashboard |
 | Regional client | there is no load generator in Singapore; the regional report is server-side timing |
 | Board on mobile | Lighthouse median 86 (target 90+). What is left is React's first render, about 280 ms at 4× CPU; three attempts to cut it were measured and reverted |

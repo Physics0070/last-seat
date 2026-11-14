@@ -20,7 +20,7 @@ When 50 people hit "join" on a team with one free seat in the same instant, exac
 | Secure: auth, leader-only, brute-force limits, validation | [`src/http.js`](src/http.js), [`src/app.js`](src/app.js), tests in `rules` and `limits-realtime-suggestions` |
 | Audit log | written in the same transaction, `GET /api/teams/:id/audit` (leader only) |
 | Suggestions with the scoring explained | [`src/suggestions.js`](src/suggestions.js), formula in [DESIGN.md](DESIGN.md), unit-tested |
-| 20+ tests in CI; seed; load test | `npm test` (87), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
+| 20+ tests in CI; seed; load test | `npm test` (88), [CI](.github/workflows/ci.yml), `npm run seed`, [LOAD_TEST.md](LOAD_TEST.md) |
 | React UI, phone and keyboard only | [`web/`](web/); the browser test drives a keyboard-only flow |
 | Live URL | https://last-seat-sg.onrender.com |
 | Bonus: optimistic UI + rollback, Compose, metrics, chaos test | request-to-join and accept/decline are optimistic and roll back on a conflict; the browser test asserts the rollback (`scripts/e2e.js`, and it fails if the rollback is removed); [`docker-compose.yml`](docker-compose.yml); `GET /metrics`; [`test/chaos.test.js`](test/chaos.test.js) |
@@ -55,7 +55,7 @@ Log in as `seed-00001@seed.invalid` with your `SEED_PASSWORD`, or sign up.
 | --- | --- |
 | `npm start` / `npm run dev` | API (and the built UI, if `web/dist` exists) on `PORT` |
 | `npm run dev:web` | Vite dev server for the UI, proxying `/api` to `PORT` |
-| `npm test` | 87 tests over real HTTP against a real MongoDB replica set (started automatically), including the chaos test that kills the server |
+| `npm test` | 88 tests over real HTTP against a real MongoDB replica set (started automatically), including the chaos test that kills the server |
 | `npm run test:e2e -- http://localhost:4000` | Drives the real UI in your installed Chrome against a running app: signup, create team, live update, two browsers racing for the last seat, the optimistic "Request to join" rolling back when the team fills first, keyboard and reduced-motion checks. Saves the screenshots below |
 | `npm run lint` / `npm run typecheck` | ESLint for the server, oxlint and `tsc` for the UI |
 | `npm run seed` | Inserts `SEED_USERS` users and `SEED_TEAMS` teams; safe to re-run |
@@ -126,7 +126,7 @@ Deployed at https://last-seat-sg.onrender.com. To redo it from scratch:
 1. **MongoDB Atlas**: create a free M0 cluster (it is a replica set), a database user, and allow access from anywhere. Copy the `mongodb+srv://` connection string.
 2. **Render**: New → Blueprint → pick this repository. `render.yaml` defines the service. Fill in the two prompted values: `MONGODB_URI` (from step 1) and `SEED_PASSWORD`. `JWT_SECRET` is generated for you.
 3. Open the URL Render gives you. Check `GET /api/health` returns `{"status":"ok"}`, sign up, create a team, and open the board in a second browser to watch it update.
-4. Optional: run `npm run seed` locally with `MONGODB_URI` pointing at Atlas to fill the board.
+4. Demo data: `render.yaml` sets `SEED_ON_BOOT=if-empty`, so on its first boot against an empty database the server writes the seed itself (10,000 users, 2,000 teams, about 11 s on the live service; seeded users get a random password). It never seeds a database that already has a seed. To reseed by hand instead, run `npm run seed` locally with `MONGODB_URI` pointing at Atlas.
 
 Free instances sleep when idle; the first request after a pause takes about a minute. Seed the Atlas database from your own machine with `MONGODB_URI` set in your shell (never commit it).
 
