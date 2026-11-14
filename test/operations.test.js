@@ -183,3 +183,33 @@ describe('idempotency record', () => {
     }
   });
 });
+
+describe('seed on boot', () => {
+  it('does nothing unless asked, seeds an empty database once, and never seeds twice', async () => {
+    const t = await startApp();
+    try {
+      const { seedOnBoot } = await import('../src/seed.js');
+      const { loadConfig } = await import('../src/config.js');
+      const { testEnv } = await import('./helpers.js');
+      const config = loadConfig(testEnv({}, t.database));
+      const log = { info: () => {} };
+      const env = { SEED_USERS: '40', SEED_TEAMS: '10', SEED_RANDOM_SEED: '7' };
+
+      expect(await seedOnBoot(t.ctx, config, env, log)).toBeNull();
+      expect(await t.ctx.users.countDocuments({ seed: true })).toBe(0);
+
+      const first = await seedOnBoot(t.ctx, config, { ...env, SEED_ON_BOOT: 'if-empty' }, log);
+      expect(first).toMatchObject({ users: 40, teams: 10 });
+      const board = await t.anon.get(`/api/hackathons/${t.hid}/teams?limit=50`);
+      expect(board.body.items.length).toBe(first.openTeams);
+
+      expect(await seedOnBoot(t.ctx, config, { ...env, SEED_ON_BOOT: 'if-empty' }, log)).toBeNull();
+      expect(await t.ctx.users.countDocuments({ seed: true })).toBe(40);
+      // seeded users cannot be signed in to: the boot seed uses a random password nobody knows
+      const login = await t.anon.post('/api/auth/login').send({ email: 'seed-00001@seed.invalid', password: 'password' });
+      expect(login.status).toBe(401);
+    } finally {
+      await t.close();
+    }
+  });
+});

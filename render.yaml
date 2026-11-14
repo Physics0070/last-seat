@@ -57,3 +57,4 @@ services:
       - { key: SEED_TEAMS, value: "2000" }
       - { key: SEED_RANDOM_SEED, value: "42" }
       - { key: SEED_PASSWORD, sync: false }
+      - { key: SEED_ON_BOOT, value: "if-empty" }
